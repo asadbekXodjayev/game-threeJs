@@ -1,0 +1,21 @@
+{
+  "name": "endless-drive-threejs",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && node scripts/og-cover.mjs",
+    "preview": "vite preview --port 4190 --strictPort",
+    "qa": "node qa/smoke.mjs"
+  },
+  "dependencies": {
+    "gsap": "^3.12.5",
+    "three": "^0.166.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.166.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.11"
+  }
+}

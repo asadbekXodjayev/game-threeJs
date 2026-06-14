@@ -1,0 +1,37 @@
+// Emits the OG cover + favicon SVGs into dist/og and dist (post-build).
+import { mkdirSync, writeFileSync, existsSync } from 'fs';
+
+const cover = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2e30"/><stop offset="0.6" stop-color="#0e1418"/>
+    </linearGradient>
+    <linearGradient id="amb" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e3742b"/><stop offset="1" stop-color="#f3b14e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#sky)"/>
+  <circle cx="600" cy="250" r="120" fill="url(#amb)" opacity="0.85"/>
+  <path d="M0 470 L520 470 L600 360 L680 470 L1200 470 L1200 630 L0 630 Z" fill="#0a0d10"/>
+  <path d="M560 630 L590 470 L610 470 L640 630 Z" fill="#33363b"/>
+  <rect x="596" y="500" width="8" height="40" fill="#f3cd5a"/>
+  <rect x="596" y="560" width="8" height="40" fill="#f3cd5a"/>
+  <text x="600" y="150" font-family="'Space Grotesk',sans-serif" font-size="92" font-weight="700" fill="#f3ece0" text-anchor="middle" letter-spacing="-2">ENDLESS DRIVE</text>
+  <text x="600" y="200" font-family="monospace" font-size="22" fill="#5ad1c4" text-anchor="middle" letter-spacing="8">A CHILL PROCEDURAL ROAD TRIP</text>
+</svg>`;
+
+const fav = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#0e1418"/>
+  <circle cx="16" cy="11" r="6" fill="#f3b14e"/>
+  <path d="M3 24 L13 24 L16 19 L19 24 L29 24 L29 30 L3 30 Z" fill="#16323a"/>
+  <rect x="15" y="25" width="2" height="4" fill="#f3cd5a"/>
+</svg>`;
+
+for (const dir of ['dist', 'dist/og', 'public', 'public/og']) {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+}
+writeFileSync('dist/og/cover.svg', cover);
+writeFileSync('public/og/cover.svg', cover);
+writeFileSync('dist/favicon.svg', fav);
+writeFileSync('public/favicon.svg', fav);
+console.log('og-cover: wrote cover.svg + favicon.svg');
