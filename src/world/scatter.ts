@@ -99,6 +99,13 @@ class KindMesh {
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = max;
     this.cap = max;
+    // Per-object frustum CULLING: the instances live in a known band ahead of
+    // the camera (z ≈ -380..55). A manual bounding sphere centred on that band
+    // lets three.js cull this whole InstancedMesh (drops the draw call) the
+    // moment the camera looks away from the road. (P4 culling proof)
+    this.mesh.frustumCulled = true;
+    this.mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, -160), 320);
+    this.mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 6);
     for (let i = 0; i < max; i++) {
       this.slots.push({ z: 9999, side: 1, rot: 0, edge: 12, kind, scale: 1, active: false });
       dummy.position.set(0, -9999, 0);
@@ -109,9 +116,10 @@ class KindMesh {
 }
 
 const KINDS: PropKind[] = ['tree', 'pine', 'palm', 'rock', 'cactus', 'building', 'bush', 'grass'];
-// per-kind pool sizes (foliage gets more)
+// per-kind pool sizes (foliage gets more). Bumped for a fuller world (P4) —
+// still instanced (one draw call per kind) and density-scaled per quality tier.
 const MAX_FOR: Partial<Record<PropKind, number>> = {
-  tree: 90, pine: 90, palm: 60, rock: 60, cactus: 40, building: 70, bush: 120, grass: 200,
+  tree: 150, pine: 150, palm: 100, rock: 110, cactus: 70, building: 110, bush: 220, grass: 380,
 };
 
 export class Scatter {
@@ -175,8 +183,10 @@ export class Scatter {
           dirty = true;
           continue;
         }
-        const cx = this.road.curveX(totalDist + -s.z);
-        dummy.position.set(cx + s.side * s.edge, 0, s.z);
+        const d = totalDist + -s.z;
+        const cx = this.road.curveX(d);
+        const cy = this.road.heightAt(d);
+        dummy.position.set(cx + s.side * s.edge, cy, s.z);
         dummy.rotation.set(0, s.rot, 0);
         dummy.scale.setScalar(s.scale);
         dummy.updateMatrix();
@@ -187,7 +197,7 @@ export class Scatter {
     }
 
     // spawn new just inside fog, rate scaled by density (much higher base now)
-    this.spawnAccum += delta * (3.0 * this.density);
+    this.spawnAccum += delta * (5.2 * this.density);
     while (this.spawnAccum > 10) {
       this.spawnAccum -= 10;
       const kind = this.pickKind();
@@ -207,6 +217,12 @@ export class Scatter {
       s.rot = this.rng.range(0, Math.PI * 2);
       s.z = SPAWN_Z - this.rng.range(0, 60);
     }
+  }
+
+  get activeCount(): number {
+    let n = 0;
+    for (const km of this.meshes.values()) for (const s of km.slots) if (s.active) n++;
+    return n;
   }
 
   dispose(): void {

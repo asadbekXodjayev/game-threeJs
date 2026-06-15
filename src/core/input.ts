@@ -3,9 +3,11 @@
 export class Input {
   steer = 0; // -1 left .. 1 right (raw target)
   throttle = 0; // -1 brake .. 1 gas
+  drift = false; // handbrake / drift trigger (Space / Shift / touch button)
   private keys = new Set<string>();
   private touchSteer = 0;
   private touchGas = 0;
+  private touchDrift = false;
 
   onHonk?: () => void;
   onPhoto?: () => void;
@@ -41,6 +43,7 @@ export class Input {
     bind('t-left', () => (this.touchSteer = -1), () => (this.touchSteer = 0));
     bind('t-right', () => (this.touchSteer = 1), () => (this.touchSteer = 0));
     bind('t-gas', () => (this.touchGas = 1), () => (this.touchGas = 0));
+    bind('t-drift', () => (this.touchDrift = true), () => (this.touchDrift = false));
   }
 
   /** call once per frame to fold inputs */
@@ -65,7 +68,12 @@ export class Input {
       if (p.buttons[6]?.pressed) th -= 1; // LT
     }
 
+    // drift/handbrake: Space or Shift on keyboard, gamepad A/X (button 0), or touch
+    let drift = this.keys.has(' ') || this.keys.has('shift') || this.touchDrift;
+    for (const p of pads) { if (p && p.buttons[0]?.pressed) drift = true; }
+
     this.steer = Math.max(-1, Math.min(1, s));
     this.throttle = Math.max(-1, Math.min(1, th));
+    this.drift = drift;
   }
 }

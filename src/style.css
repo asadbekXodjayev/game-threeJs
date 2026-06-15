@@ -202,6 +202,10 @@ button { font-family: inherit; cursor: pointer; color: inherit; border: 0; backg
 .touch-left { left: var(--pad); }
 .touch-right { left: calc(var(--pad) + 88px); }
 .touch-gas { right: var(--pad); }
+.touch-drift {
+  right: calc(var(--pad) + 88px); font-size: 0.78rem; font-weight: 700;
+  letter-spacing: 0.06em; border-color: rgba(243, 177, 78, 0.6);
+}
 
 /* ============================ PANEL ============================ */
 .panel {

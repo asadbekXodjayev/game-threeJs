@@ -8,6 +8,7 @@ import { GameAudio } from './audio/audio';
 import { Director } from './world/director';
 import { Sky } from './world/sky';
 import { Road, LANE_OFFSET } from './world/road';
+import { Terrain } from './world/terrain';
 import { Car } from './world/car';
 import { Scatter } from './world/scatter';
 import { Life } from './world/life';
@@ -61,6 +62,8 @@ scene.add(sky.group);
 const director = new Director(rng);
 const road = new Road(rng.range(0, 100));
 scene.add(road.group);
+const terrain = new Terrain(rng.range(0, 1000));
+scene.add(terrain.group);
 const car = new Car();
 scene.add(car.root);
 const scatter = new Scatter(rng, road, director.currentBiome);
@@ -102,7 +105,13 @@ let steerSmooth = 0;
 let roll = 0, pitch = 0, squash = 0, cornerLean = 0;
 let slipVel = 0; // lateral slip velocity (drift) — grip vs slip
 let slip = 0; // 0..1 how much the rear is stepping out (for skid fx)
-let yawDrift = 0; // extra heading from the slide (car points into the slide)
+let yawDrift = 0; // extra heading from the slide (car body yaws to slip angle)
+let counterSteer = 0; // front-wheel opposite lock while drifting
+let slipAngleDeg = 0; // measured |heading - velocity| in degrees (drift proof)
+let driftForce = false; // QA / handbrake forced drift trigger
+let shake = 0; // camera shake amount from collisions (decays)
+let collisions = 0; // running count of player↔traffic collisions
+let lastHitT = 0;
 let totalDist = 0;
 let running = false;
 let paused = false;
@@ -197,36 +206,58 @@ function step(dt: number): void {
   const force = (desired - laneX) * k - laneVel * 1.4;
   laneVel += force * dt;
 
-  // --- DRIFT: grip vs slip ---------------------------------------------------
-  // Hard steering at speed exceeds available grip and the rear steps out: a
-  // lateral slip velocity builds, the car slides, then grip recovers and it
-  // auto-settles. Forgiving by design — capped, always self-corrects, never
-  // spins. Tuned gentle for touch/phone via reduced authority at high steer.
-  // grip threshold scales with the vehicle's grip stat (F1 huge grip = very
-  // late, tiny slide; coupe/SUV let go sooner). reduced-motion raises it.
-  const gripThreshold = (reduced ? 0.7 : 0.34) + (st.grip - 0.6) * 0.5;
-  // cornering demand scales with how hard we're steering and how fast we go.
-  // raw input is used (not the speed-attenuated steerSmooth) so the slide can
-  // actually be provoked at the top of the speed range.
+  // --- DRIFT: real, VISIBLE slip angle --------------------------------------
+  // A drift is triggered two ways:
+  //   1) HANDBRAKE / drift button (Space, Shift, gamepad A, touch) — instant
+  //      grip break: the rear steps out hard while you hold it.
+  //   2) Hard steering at speed beyond the tyre's grip budget — the rear lets
+  //      go on its own (grip threshold scales with the vehicle's grip stat).
+  // While drifting, the car BODY yaws to a large slip angle (target 30–42°) in
+  // the direction of the turn, the front wheels COUNTER-STEER opposite lock, and
+  // tyre smoke + skid marks + skid audio fire. Easing off recovers grip and the
+  // car straightens — forgiving, capped, never spins fully, no fail state.
+  const handbrake = input.drift || driftForce;
+  const gripThreshold = (reduced ? 0.62 : 0.3) + (st.grip - 0.6) * 0.45;
   const demand = Math.abs(input.steer) * (0.35 + speed01 * 0.9);
-  const slipForce = Math.max(0, demand - gripThreshold);
-  // push slip in the direction of the turn; driftiness sets how eagerly
+  const overGrip = Math.max(0, demand - gripThreshold);
+  // are we actively drifting? handbrake at any decent speed, OR over-grip cornering
+  const fast = speed01 > 0.22;
+  const drifting = (handbrake && fast) || overGrip > 0.04;
   const slipDir = Math.sign(input.steer || steerSmooth) || 1;
-  const slipAuthority = (reduced ? 14 : 30) * (0.4 + st.driftiness);
-  slipVel += slipDir * slipForce * slipAuthority * dt;
-  // grip recovery: more grip = faster auto-settle back to zero
-  slipVel -= slipVel * Math.min(1, (reduced ? 3.2 : 2.4) * (0.6 + st.grip) * dt);
-  slipVel = THREE.MathUtils.clamp(slipVel, -7, 7); // never wild
-  laneVel += slipVel * dt * 2.2;
+
+  // lateral slip velocity (used for skid-mark placement + a touch of lane drift)
+  const slipAuthority = (reduced ? 16 : 32) * (0.4 + st.driftiness);
+  const provoke = (handbrake && fast ? 0.5 + Math.abs(input.steer) * 0.6 : overGrip);
+  slipVel += slipDir * provoke * slipAuthority * dt;
+  slipVel -= slipVel * Math.min(1, (reduced ? 3.4 : 2.6) * (0.6 + st.grip) * dt);
+  slipVel = THREE.MathUtils.clamp(slipVel, -8, 8);
+  laneVel += slipVel * dt * 1.8;
 
   laneX += laneVel * dt;
   laneX = THREE.MathUtils.clamp(laneX, -8.5, 8.5);
 
-  // slip amount 0..1 for skid fx + car yaw into the slide
-  const targetSlip = THREE.MathUtils.clamp(Math.abs(slipVel) / 3.5, 0, 1);
-  slip += (targetSlip - slip) * Math.min(1, 6 * dt);
-  const targetYaw = -slipVel * 0.045; // point nose into the slide
-  yawDrift += (targetYaw - yawDrift) * Math.min(1, 5 * dt);
+  // big visible body yaw to the slip angle. Target peaks ~0.72 rad (≈41°) at a
+  // full handbrake drift, scaled by driftiness; recovers fast when not drifting.
+  const maxSlip = reduced ? 0.5 : 0.78; // rad
+  const driftAmt = drifting ? THREE.MathUtils.clamp(
+    (handbrake && fast ? 0.62 : 0) + provoke * 0.9, 0, 1,
+  ) : 0;
+  const targetYaw = slipDir * driftAmt * maxSlip * (0.7 + st.driftiness * 0.5);
+  // attack fast into the drift, ease out a touch slower so it looks deliberate
+  const yawEase = drifting ? 7 : 4.5;
+  yawDrift += (targetYaw - yawDrift) * Math.min(1, yawEase * dt);
+
+  // measured slip angle (degrees) = how far the body heading diverges from the
+  // travel/tangent direction. yawDrift IS that divergence (travel ≈ tangent).
+  slipAngleDeg = Math.abs(yawDrift) * 57.2958;
+
+  // front wheels counter-steer (opposite lock), proportional to the slide
+  const targetCounter = -slipDir * driftAmt * 0.55;
+  counterSteer += (targetCounter - counterSteer) * Math.min(1, 9 * dt);
+
+  // slip amount 0..1 for skid fx / smoke / audio
+  const targetSlip = THREE.MathUtils.clamp(Math.max(Math.abs(slipVel) / 4, driftAmt), 0, 1);
+  slip += (targetSlip - slip) * Math.min(1, 7 * dt);
 
   // body feel — extra roll while drifting sells the slide. Heavier bodies roll
   // a touch less and settle slower; bounce (suspension softness) scales squash.
@@ -246,19 +277,32 @@ function step(dt: number): void {
   road.update(scroll, totalDist);
   scatter.update(scroll, totalDist);
   life.update(scroll, dt, totalDist, totalDist * 0.05);
-  props.update(dt, scroll, totalDist, road.curveX(totalDist) + laneX, speed);
-  traffic.update(dt, scroll, totalDist, speed);
+  const playerX = road.curveX(totalDist) + laneX;
+  props.update(dt, scroll, totalDist, playerX, speed);
+  // real traffic collision: knock the player back, scrub speed, shake + bump SFX
+  traffic.update(dt, scroll, totalDist, speed, playerX, st.mass, (hit) => {
+    laneVel += hit.impulseX;
+    speed = Math.max(minCruise * 0.5, speed * (1 - hit.scrub));
+    cruise = Math.min(cruise, speed + 4);
+    shake = Math.min(1.2, shake + hit.strength * 0.9);
+    yawDrift += -Math.sign(hit.impulseX || 1) * hit.strength * 0.18; // jolt the body
+    const nowT = totalDist; // distance-stamped throttle so we don't spam audio
+    if (nowT - lastHitT > 3) { collisions++; audio.bump(hit.strength); lastHitT = nowT; }
+  });
   landmarks.update(dt, scroll, totalDist, director.currentBiomeId);
   director.update(dt);
   weather.update(dt, car.root.position);
 
-  // skid marks: drop dabs at the rear wheels while sliding
+  // skid marks + tyre smoke while sliding (drift feedback)
   skid.update(dt, scroll);
-  if (slip > 0.35 && speed > 8) {
-    const baseX = road.curveX(totalDist) + laneX;
+  shake -= shake * Math.min(1, 4 * dt);
+  if (slip > 0.3 && speed > 7) {
+    const baseX = playerX;
     const h = road.headingAt(totalDist);
-    skid.emit(baseX - 1.0, -1.45, h);
-    skid.emit(baseX + 1.0, -1.45, h);
+    const cy = road.heightAt(totalDist);
+    skid.emit(baseX - 1.0, -1.45, h, cy);
+    skid.emit(baseX + 1.0, -1.45, h, cy);
+    if (slip > 0.45) { car.emitSmoke(-1); car.emitSmoke(1); }
   }
 
   // audio mapping
@@ -270,16 +314,25 @@ function step(dt: number): void {
 }
 
 function render(dt: number, t: number): void {
-  // place car at road center + lane offset
+  // place car on the elevated road center + lane offset
   const baseX = road.curveX(totalDist);
-  car.root.position.set(baseX + laneX, 0, 0);
-  // face along the spline tangent + steer + drift yaw
+  const baseY = road.heightAt(totalDist);
+  car.root.position.set(baseX + laneX, baseY, 0);
+  // face along the spline tangent + steer + drift yaw (drift yaw is the big one)
   const heading = road.headingAt(totalDist);
-  car.root.rotation.y = -heading + steerSmooth * 0.08 + yawDrift;
+  car.root.rotation.y = -heading + steerSmooth * 0.06 + yawDrift;
+  // pitch the chassis with the road slope so it noses up hills / down into dips
+  const slope = road.slopeAt(totalDist);
+  car.root.rotation.x = slope;
   car.body.position.y = car.stats.rideHeight; // tall trucks sit up, exotics low
   car.setFeel(roll, pitch, squash, cornerLean);
-  car.steerWheels(steerSmooth * 0.4);
+  // front wheels: normal steer + counter-steer (opposite lock) while drifting
+  car.steerWheels(steerSmooth * 0.4 + counterSteer);
   car.spin(speed, dt);
+  car.updateSmoke(dt);
+
+  // distant parallax terrain drifts with travel + tints to the biome ground
+  terrain.update(totalDist, baseX, director.state.ground, director.state.night);
 
   // apply blended biome/day-night/weather state
   const s = director.state;
@@ -303,11 +356,14 @@ function render(dt: number, t: number): void {
   const hl = THREE.MathUtils.clamp(s.night * 1.4 + (director.activeWeather === 'storm' ? 0.4 : 0), 0, 1);
   car.setHeadlights(hl);
 
-  // camera rig per mode with damping + lag
+  // camera rig per mode with damping + lag. Camera Y tracks the car's terrain
+  // height so it crests hills with the car — and because the road dips away on
+  // the far side of a crest, you briefly lose sight of it (real elevation).
   const cx = car.root.position.x;
+  const cy = car.root.position.y; // terrain height under the car
   if (photo) {
     // free orbit handled by pointer below; keep target on car
-    cameraTarget.set(cx, 2.2, -2);
+    cameraTarget.set(cx, cy + 2.2, -2);
     camera.lookAt(cameraTarget);
   } else {
     // camera offset scales from the vehicle: long/tall rigs pull back & up,
@@ -315,12 +371,20 @@ function render(dt: number, t: number): void {
     const cd = car.stats.camDist;
     const rh = car.stats.rideHeight;
     let cam: THREE.Vector3;
-    if (camMode === 'chase') cam = new THREE.Vector3(cx - steerSmooth * 1.5, 5.2 + cd * 0.45 + rh, 11.5 + cd);
-    else if (camMode === 'cinematic') cam = new THREE.Vector3(cx + 7 + cd * 0.4, 2.4 + cd * 0.3 + rh, 9 + cd * 0.6);
-    else cam = new THREE.Vector3(cx, 2.0 + rh, 1.2 + cd * 0.3); // hood
+    if (camMode === 'chase') cam = new THREE.Vector3(cx - steerSmooth * 1.5, cy + 5.2 + cd * 0.45 + rh, 11.5 + cd);
+    else if (camMode === 'cinematic') cam = new THREE.Vector3(cx + 7 + cd * 0.4, cy + 2.4 + cd * 0.3 + rh, 9 + cd * 0.6);
+    else cam = new THREE.Vector3(cx, cy + 2.0 + rh, 1.2 + cd * 0.3); // hood
     const lag = reduced ? 4 : 2.6;
     camera.position.lerp(cam, Math.min(1, lag * dt));
-    cameraTarget.lerp(new THREE.Vector3(cx + steerSmooth * 2, 1.6, -18), Math.min(1, 3 * dt));
+    // look toward the road AHEAD at its own elevation (so over a crest the gaze
+    // points up at the rise, then the road drops out of view beyond it)
+    const aheadY = road.heightAt(totalDist + 18);
+    cameraTarget.lerp(new THREE.Vector3(cx + steerSmooth * 2, aheadY + 1.6, -18), Math.min(1, 3 * dt));
+    // collision shake: jitter the camera briefly on impact
+    if (shake > 0.001 && !reduced) {
+      camera.position.x += (Math.random() - 0.5) * shake;
+      camera.position.y += (Math.random() - 0.5) * shake * 0.6;
+    }
     camera.lookAt(cameraTarget);
   }
 
@@ -472,10 +536,31 @@ const li = setInterval(() => {
   forceWeather: (id: WeatherId) => { weather.setWeather(id); HUD.setWeatherLabel(WEATHERS[id].label); if (id === 'storm') thunderArmed = true; },
   forceNight: () => director.setClock(0),
   forceDay: () => director.setClock(12),
+  setClock: (h: number) => director.setClock(h),
   setCruise: (v: number) => { cruise = v; },
   warp: (km: number) => { totalDist += km * 1000; },
   lockQuality: (tier: 0 | 1 | 2 | null) => perf.lock(tier),
   setVehicle: (id: string) => setVehicle(id),
   vehicles: () => VEHICLES.map((v) => ({ id: v.id, name: v.name, topSpeed: v.topSpeed })),
-  state: () => ({ speed, totalDist, biome: director.currentBiomeId, weather: weather.current, tier: perf.tier, fps: perf.fps, props: props.activeCount, traffic: traffic.activeCount, slip, night: director.state.night, tornado: weather.tornadoLevel, vehicle: car.stats.id, maxSpeed: MAX_SPEED }),
+  // drift control for QA: hold the handbrake drift on/off (steer is still needed)
+  setDrift: (on: boolean) => { driftForce = on; },
+  // steer override for QA so a sustained drift can be provoked headlessly
+  setSteer: (v: number) => { input.steer = THREE.MathUtils.clamp(v, -1, 1); },
+  // force a player↔traffic collision by parking a car right in front of us
+  forceCollision: () => traffic.slamInFront(road.curveX(totalDist) + laneX, totalDist),
+  // road-shape probes for the elevation/curve screenshots
+  roadProbe: () => ({
+    heightHere: road.heightAt(totalDist),
+    heightAhead: road.heightAt(totalDist + 60),
+    slopeDeg: road.slopeAt(totalDist) * 57.2958,
+    curveX: road.curveX(totalDist),
+    headingDeg: road.headingAt(totalDist) * 57.2958,
+  }),
+  state: () => ({
+    speed, totalDist, biome: director.currentBiomeId, weather: weather.current,
+    tier: perf.tier, fps: perf.fps, props: props.activeCount, scatter: scatter.activeCount, traffic: traffic.activeCount,
+    slip, slipAngleDeg, drifting: slipAngleDeg > 10, collisions,
+    night: director.state.night, tornado: weather.tornadoLevel, vehicle: car.stats.id,
+    maxSpeed: MAX_SPEED, drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
+  }),
 };

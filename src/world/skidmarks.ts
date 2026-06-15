@@ -10,7 +10,7 @@ import * as THREE from 'three';
 const dummy = new THREE.Object3D();
 const MAX = 120;
 
-interface Mark { x: number; z: number; rot: number; life: number; active: boolean; }
+interface Mark { x: number; y: number; z: number; rot: number; life: number; active: boolean; }
 
 export class SkidMarks {
   group = new THREE.Group();
@@ -27,18 +27,18 @@ export class SkidMarks {
     this.mesh.count = MAX;
     this.mesh.frustumCulled = false;
     for (let i = 0; i < MAX; i++) {
-      this.marks.push({ x: 0, z: 0, rot: 0, life: 0, active: false });
+      this.marks.push({ x: 0, y: 0, z: 0, rot: 0, life: 0, active: false });
       dummy.position.set(0, -9999, 0); dummy.updateMatrix();
       this.mesh.setMatrixAt(i, dummy.matrix);
     }
     this.group.add(this.mesh);
   }
 
-  /** drop a mark at world (x,z) with heading rot */
-  emit(x: number, z: number, rot: number): void {
+  /** drop a mark at world (x,z) on surface height y with heading rot */
+  emit(x: number, z: number, rot: number, y = 0): void {
     const m = this.marks[this.cursor];
     this.cursor = (this.cursor + 1) % MAX;
-    m.x = x; m.z = z; m.rot = rot; m.life = 1; m.active = true;
+    m.x = x; m.y = y; m.z = z; m.rot = rot; m.life = 1; m.active = true;
   }
 
   update(dt: number, scroll: number): void {
@@ -55,7 +55,7 @@ export class SkidMarks {
         dirty = true;
         continue;
       }
-      dummy.position.set(m.x, 0.02, m.z);
+      dummy.position.set(m.x, m.y + 0.02, m.z);
       dummy.rotation.set(0, m.rot, 0);
       dummy.scale.setScalar(1);
       dummy.updateMatrix();

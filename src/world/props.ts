@@ -67,9 +67,11 @@ export class Props {
     b.active = true;
     b.sleeping = false;
     b.z = -200 - this.rng.range(0, 60);
-    const cx = this.road.curveX(totalDist + -b.z);
+    const d = totalDist + -b.z;
+    const cx = this.road.curveX(d);
+    const cy = this.road.heightAt(d);
     const lane = this.rng.range(-ROAD_WIDTH / 2 + 1, ROAD_WIDTH / 2 - 1);
-    b.pos.set(cx + lane, 0, b.z);
+    b.pos.set(cx + lane, cy, b.z);
     b.vel.set(0, 0, 0);
     b.ang.set(0, 0, 0);
     b.rot.set(0, this.rng.range(0, 6.28), 0);
@@ -89,14 +91,15 @@ export class Props {
       if (!b.active) continue;
       b.pos.z += scroll; // world scrolls toward camera
       b.z = b.pos.z;
+      const floor = this.road.heightAt(totalDist - b.pos.z); // terrain under the body
 
       // car collision: car sits near z in [-3,3] at x = carX
-      if (!b.sleeping || b.pos.y > 0.05) {
+      if (!b.sleeping || b.pos.y > floor + 0.05) {
         // integrate physics
         b.vel.y += GRAV * dt;
         b.pos.addScaledVector(b.vel, dt);
-        if (b.pos.y < 0) {
-          b.pos.y = 0;
+        if (b.pos.y < floor) {
+          b.pos.y = floor;
           if (b.vel.y < 0) b.vel.y *= -0.32; // bounce
           // ground friction
           b.vel.x *= 0.86; b.vel.z *= 0.86;
@@ -104,7 +107,7 @@ export class Props {
         }
         b.rot.x += b.ang.x * dt; b.rot.y += b.ang.y * dt; b.rot.z += b.ang.z * dt;
         // settle test
-        if (b.pos.y < 0.02 && b.vel.lengthSq() < 0.05 && b.ang.lengthSq() < 0.05) {
+        if (b.pos.y < floor + 0.02 && b.vel.lengthSq() < 0.05 && b.ang.lengthSq() < 0.05) {
           b.sleeping = true; b.vel.set(0, 0, 0); b.ang.set(0, 0, 0);
         }
       }
@@ -112,7 +115,7 @@ export class Props {
       // collision with car (kinematic): nudge if close
       const dx = b.pos.x - carX;
       const dz = b.pos.z; // car ~ z=0
-      if (Math.abs(dz) < 3 && Math.abs(dx) < 1.6 && b.pos.y < 1.4) {
+      if (Math.abs(dz) < 3 && Math.abs(dx) < 1.6 && b.pos.y < floor + 1.4) {
         b.sleeping = false;
         const dir = Math.sign(dx) || (this.rng.bool() ? 1 : -1);
         const impulse = 3 + carSpeed * 0.25;

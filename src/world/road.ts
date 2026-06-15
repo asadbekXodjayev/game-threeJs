@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { makeRoadTexture } from './textures';
 
 /**
- * CONTINUOUS spline ribbon road (rebuilt P0).
+ * CONTINUOUS spline ribbon road (rebuilt P0; elevated + bidirectional P2).
  *
  * Previous bug: the road was a set of axis-aligned flat PlaneGeometry tiles that
  * only scrolled on Z while their X was offset by curveX(dist). Because each tile
@@ -17,9 +17,16 @@ import { makeRoadTexture } from './textures';
  * so the left/right edges of consecutive segments are shared (vertex-continuous)
  * — there is no gap at any distance and the strip banks/curves as one surface.
  * Each frame we re-sample the spline at (totalDist + arc) so the ribbon scrolls
- * like a treadmill; vertices are recycled, never created/destroyed. The ground,
- * shoulders and lane markings are sampled from the identical centerline so they
- * follow the curve exactly. (isEndless + isPooled + isProcedural)
+ * like a treadmill; vertices are recycled, never created/destroyed.
+ *
+ * P2 "real travel" upgrade (kills the treadmill feel):
+ *  - curveY(): seeded multi-octave noise on the Y axis -> rolling HILLS and DIPS.
+ *    The car pitches with slopeAt(); over a crest the camera briefly loses the
+ *    road as it dips away. Ground + road + markings share the SAME height.
+ *  - curveX(): seeded sum-of-sines tuned to swing BOTH ways (no constant drift),
+ *    with random per-octave phase so left/right bends alternate unpredictably.
+ *  - heightAt()/slopeAt() are read by main.ts (car height + pitch) and by every
+ *    scatter/prop/traffic system so the whole world sits on the terrain surface.
  */
 
 export const ROAD_WIDTH = 14; // 4 lanes-ish
@@ -47,9 +54,16 @@ export class Road {
   private markPos: Float32Array;
 
   private curveSeed: number;
+  // seeded random phases so each playthrough bends left/right differently
+  private px: number[] = [];
+  private py: number[] = [];
 
   constructor(curveSeed: number) {
     this.curveSeed = curveSeed;
+    // deterministic phase table from the seed (simple LCG, no extra deps)
+    let s = (curveSeed * 9973 + 12345) >>> 0;
+    const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    for (let i = 0; i < 8; i++) { this.px.push(rnd() * Math.PI * 2); this.py.push(rnd() * Math.PI * 2); }
 
     const roadTex = makeRoadTexture();
     roadTex.repeat.set(1, 6);
@@ -95,7 +109,6 @@ export class Road {
     this.groundGeo.setIndex(gIdx);
 
     // --- lane markings: 2 dashed center dividers, built as small quads ---
-    // we draw the two lane dividers as a thin ribbon each, dashed via UV/opacity baked into geometry skips.
     const markVerts = (SEGS + 1) * 4 * 3; // 2 dividers * 2 verts
     this.markGeo = new THREE.BufferGeometry();
     this.markPos = new Float32Array(markVerts);
@@ -129,16 +142,45 @@ export class Road {
     this.rebuild(0);
   }
 
-  /** Lateral center of the road at a given world distance (metres travelled). */
+  /**
+   * Lateral center of the road at a given world distance (metres travelled).
+   * Sum-of-sines with seeded phases so the road swings BOTH left and right with
+   * varying strength — no constant one-way drift. The big slow term sets the
+   * dominant sweep; faster terms add genuine alternating L/R kinks.
+   */
   curveX(dist: number): number {
-    const s = dist * 0.0016 + this.curveSeed;
-    // chill sweeping S-curves: slow base + a secondary, with a slow envelope
-    return Math.sin(s) * 18 + Math.sin(s * 0.37 + 1.3) * 11 + Math.sin(s * 0.13 + 4.0) * 6;
+    const s = dist * 0.0021 + this.curveSeed;
+    return (
+      Math.sin(s + this.px[0]) * 24 +
+      Math.sin(s * 0.41 + this.px[1]) * 15 +
+      Math.sin(s * 0.19 + this.px[2]) * 9 +
+      Math.sin(s * 1.05 + this.px[3]) * 7 +
+      // faster, smaller terms add genuine alternating L/R kinks whose tangent is
+      // steep enough to read as a clear bend (not just a long lazy sweep)
+      Math.sin(s * 2.6 + this.px[4]) * 8 +
+      Math.sin(s * 4.1 + this.px[5]) * 4
+    );
+  }
+
+  /**
+   * Vertical elevation (Y) of the centerline at a distance — seeded rolling
+   * hills and dips. Multi-octave so you get long valleys with smaller rises on
+   * top. Amplitude is generous enough that you crest a hill and lose sight of
+   * the road dipping away beyond it.
+   */
+  curveY(dist: number): number {
+    // shorter wavelengths than the lateral curve so crests are steep enough to
+    // actually lose the road over them (you crest a rise, road dips away).
+    const s = dist * 0.009 + this.curveSeed * 0.7;
+    return (
+      Math.sin(s + this.py[0]) * 7.5 +
+      Math.sin(s * 0.45 + this.py[1]) * 5.0 +
+      Math.sin(s * 2.3 + this.py[2]) * 2.0
+    );
   }
 
   /** banking (roll) of the road at a given distance — gentle, follows curvature */
   private bankAt(dist: number): number {
-    // derivative of curveX approximates lateral slope -> bank into the curve
     const d1 = this.curveX(dist + 1) - this.curveX(dist - 1);
     return THREE.MathUtils.clamp(-d1 * 0.06, -0.12, 0.12);
   }
@@ -147,6 +189,15 @@ export class Road {
   headingAt(dist: number): number {
     const d1 = this.curveX(dist + 2) - this.curveX(dist - 2);
     return Math.atan2(d1, 4);
+  }
+
+  /** terrain height at a distance — what the car/props sit on. */
+  heightAt(dist: number): number { return this.curveY(dist); }
+
+  /** longitudinal slope (pitch) of the road at a distance: rise over run. */
+  slopeAt(dist: number): number {
+    const dy = this.curveY(dist + 3) - this.curveY(dist - 3);
+    return Math.atan2(dy, 6);
   }
 
   /**
@@ -162,11 +213,13 @@ export class Road {
       const z = BEHIND - i * SEG_LEN;
       const dist = totalDist - z; // distance value used by curveX (z negative ahead)
       const cx = this.curveX(dist);
+      const cy = this.curveY(dist);
       const bank = this.bankAt(dist);
 
-      // tangent in world space (dx/dz). Going forward = -z, so use neighbour.
+      // tangent in world space (dx/dz, dy/dz). Going forward = -z.
       const cxAhead = this.curveX(dist + SEG_LEN);
-      tan.set(cxAhead - cx, 0, -SEG_LEN).normalize();
+      const cyAhead = this.curveY(dist + SEG_LEN);
+      tan.set(cxAhead - cx, cyAhead - cy, -SEG_LEN).normalize();
       // perpendicular (right vector) = tan x up
       perp.crossVectors(tan, up).normalize();
       // banking tilts the cross section: raise the outer edge a touch
@@ -175,23 +228,23 @@ export class Road {
 
       const li = (i * 2) * 3;
       const ri = (i * 2 + 1) * 3;
-      // road edges
+      // road edges (sit on the elevated centerline)
       this.roadPos[li] = cx - perp.x * HALF;
-      this.roadPos[li + 1] = 0.01 + yL;
+      this.roadPos[li + 1] = cy + 0.01 + yL;
       this.roadPos[li + 2] = z;
       this.roadPos[ri] = cx + perp.x * HALF;
-      this.roadPos[ri + 1] = 0.01 + yR;
+      this.roadPos[ri + 1] = cy + 0.01 + yR;
       this.roadPos[ri + 2] = z;
 
-      // ground edges (wide, same spine so it never separates from the road)
+      // ground edges (wide, same spine + height so it never separates)
       this.groundPos[li] = cx - perp.x * GROUND_HALF;
-      this.groundPos[li + 1] = -0.04;
+      this.groundPos[li + 1] = cy - 0.04;
       this.groundPos[li + 2] = z;
       this.groundPos[ri] = cx + perp.x * GROUND_HALF;
-      this.groundPos[ri + 1] = -0.04;
+      this.groundPos[ri + 1] = cy - 0.04;
       this.groundPos[ri + 2] = z;
 
-      // lane dividers at +/- LANE_OFFSET, each a thin quad
+      // lane dividers at +/- LANE_OFFSET, each a thin quad on the surface
       const w = 0.18;
       for (let d = 0; d < 2; d++) {
         const lane = (d === 0 ? -LANE_OFFSET : LANE_OFFSET);
@@ -199,9 +252,9 @@ export class Road {
         const mli = (base + i * 2) * 3;
         const mri = (base + i * 2 + 1) * 3;
         const mx = cx + perp.x * lane;
-        const mz = z; // perp.z ~ small; keep on z line for simplicity
-        this.markPos[mli] = mx - perp.x * w; this.markPos[mli + 1] = 0; this.markPos[mli + 2] = mz - perp.z * lane;
-        this.markPos[mri] = mx + perp.x * w; this.markPos[mri + 1] = 0; this.markPos[mri + 2] = mz - perp.z * lane;
+        const mz = z;
+        this.markPos[mli] = mx - perp.x * w; this.markPos[mli + 1] = cy; this.markPos[mli + 2] = mz - perp.z * lane;
+        this.markPos[mri] = mx + perp.x * w; this.markPos[mri + 1] = cy; this.markPos[mri + 2] = mz - perp.z * lane;
       }
     }
     this.roadGeo.attributes.position.needsUpdate = true;

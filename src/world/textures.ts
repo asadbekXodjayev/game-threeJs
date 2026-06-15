@@ -76,6 +76,39 @@ export function makeBillboardTexture(label: string): THREE.Texture {
   return new THREE.CanvasTexture(cv);
 }
 
+/** Realistic-ish MOON surface: pale grey base with darker maria + craters,
+ *  painted procedurally so the night moon reads as a real cratered body. */
+export function makeMoonTexture(): THREE.Texture {
+  const [cv, ctx] = canvas(256, 256);
+  // base regolith grey with subtle noise
+  ctx.fillStyle = '#b9bcc2';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 7000; i++) {
+    const v = 150 + Math.random() * 70;
+    ctx.fillStyle = `rgba(${v},${v},${v + 6},${Math.random() * 0.25})`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  // dark maria (large smooth seas)
+  for (let i = 0; i < 6; i++) {
+    const x = Math.random() * 256, y = Math.random() * 256, r = 26 + Math.random() * 46;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(120,124,132,0.55)');
+    g.addColorStop(1, 'rgba(120,124,132,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.28); ctx.fill();
+  }
+  // craters: dark rim shadow + bright highlight = a little relief
+  for (let i = 0; i < 60; i++) {
+    const x = Math.random() * 256, y = Math.random() * 256, r = 2 + Math.random() * 12;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.28);
+    ctx.fillStyle = 'rgba(90,92,100,0.5)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.25, r * 0.7, 0, 6.28);
+    ctx.fillStyle = 'rgba(210,212,220,0.4)'; ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** Circular sprite texture for particles & headlight glow. */
 export function makeDiscTexture(soft = true): THREE.Texture {
   const [cv, ctx] = canvas(64, 64);

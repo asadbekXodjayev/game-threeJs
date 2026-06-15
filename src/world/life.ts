@@ -48,6 +48,9 @@ export class Life {
     cg.translate(0, 0.9, 0);
     this.critters = new THREE.InstancedMesh(cg, new THREE.MeshStandardMaterial({ color: 0x8a6b4a, flatShading: true }), CRITTERS);
     this.critters.castShadow = true;
+    // frustum-cull the roadside critters (they live in the band ahead)
+    this.critters.frustumCulled = true;
+    this.critters.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, -160), 320);
     this.group.add(this.critters);
     for (let i = 0; i < CRITTERS; i++) {
       this.critterState.push({ x: 0, z: 9999, side: 1, phase: 0, active: false, deer: biome.life.includes('deer') });
@@ -84,9 +87,11 @@ export class Life {
       if (!c.active) continue;
       c.z += delta;
       if (c.z > 40) { c.active = false; dummy.position.set(0, -9999, 0); dummy.updateMatrix(); this.critters.setMatrixAt(i, dummy.matrix); dirty = true; continue; }
-      const cx = this.road.curveX(totalDist + -c.z);
+      const d = totalDist + -c.z;
+      const cx = this.road.curveX(d);
+      const cy = this.road.heightAt(d);
       const bob = Math.abs(Math.sin(t * 6 + c.phase)) * 0.12;
-      dummy.position.set(cx + c.side * (10 + (i % 5) * 3), bob, c.z);
+      dummy.position.set(cx + c.side * (10 + (i % 5) * 3), cy + bob, c.z);
       dummy.rotation.set(0, c.side > 0 ? -1.2 : 1.2, 0);
       dummy.scale.setScalar(c.deer ? 1.0 : 0.78);
       dummy.updateMatrix();

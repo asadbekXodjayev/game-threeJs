@@ -171,6 +171,29 @@ export class GameAudio {
     }
   }
 
+  /** collision bump — a short low thud + body knock, level 0..1 */
+  bump(level = 1): void {
+    if (!this.ctx) return;
+    const ctx = this.ctx; const t = ctx.currentTime;
+    // low thud (sine drop)
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 130;
+    const g = ctx.createGain(); g.gain.value = 0;
+    o.connect(g); g.connect(this.gEngine);
+    g.gain.linearRampToValueAtTime(0.3 * level, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    o.frequency.exponentialRampToValueAtTime(50, t + 0.3);
+    o.start(t); o.stop(t + 0.4);
+    // noise crunch
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.2, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900;
+    const ng = ctx.createGain(); ng.gain.value = 0.18 * level;
+    src.connect(bp); bp.connect(ng); ng.connect(this.gEngine);
+    src.start(t);
+  }
+
   thunder(): void {
     if (!this.ctx) return;
     const ctx = this.ctx; const t = ctx.currentTime;

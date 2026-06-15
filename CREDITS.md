@@ -17,8 +17,11 @@ cylinders / spheres, no branded, ripped, or downloaded models; the continuous sp
 (with lane dividers + ground),
 scatter (trees/pines/palms/rocks/cactus/buildings + foliage bushes/grass tufts), ambient life
 (birds, deer, pedestrians), **light traffic** cars (instanced low-poly), **tyre skid-mark** dabs,
-knockable props (cone/bin/ball), and the landmarks (Iron Lattice Tower, Harbor Statue, Great
-Pyramids, Triumphal Arch, Sky Obelisk, Stone Colossus) with a cheap far-LOD silhouette impostor.
+knockable props (cone/bin/ball), the **distant parallax terrain** silhouette bands
+(`src/world/terrain.ts`), the **realistic sun disc + cratered moon sphere** (`src/world/sky.ts`),
+the **tyre-smoke `Points` system** on the player car (`src/world/car.ts`), and the landmarks (Iron
+Lattice Tower, Harbor Statue, Great Pyramids, Triumphal Arch, Sky Obelisk, Stone Colossus) with a
+cheap far-LOD silhouette impostor.
 The landmarks are **original stylized low-poly interpretations** — no branded or ripped models,
 no trademarked signage. No external model files are downloaded.
 
@@ -29,6 +32,8 @@ All written in-repo, no external assets:
   green→teal→violet, fades in with night, reduced-motion-aware (`src/world/sky.ts`).
 - **Tornado funnel** — a swirling-band shader on a tapered cone + a debris `Points` swarm,
   distant and cinematic (`src/world/weather.ts`).
+- **Sky dome** gradient + sun-glow shader; the **denser (2600) starfield** now varies point size
+  and brightness with a realistic faint-heavy magnitude distribution (`src/world/sky.ts`).
 
 ## Textures & imagery (isImagesUsed)
 All bitmap imagery is **generated procedurally at runtime** via `<canvas>` in
@@ -36,7 +41,9 @@ All bitmap imagery is **generated procedurally at runtime** via `<canvas>` in
 - Asphalt road texture with edge + dashed lane markings.
 - Noised ground tile (tinted per biome).
 - City billboard / landmark nameplate poster (gradient + grid + type).
-- Radial disc sprite for particles and headlight glow.
+- **Cratered MOON surface** (`makeMoonTexture`) — pale regolith grey with darker maria + craters
+  (rim shadow + highlight relief), painted procedurally so the night moon reads as a real body.
+- Radial disc sprite for particles, tyre smoke, headlight glow, and the sun/moon halos.
 - OG cover + favicon are hand-authored SVG (`scripts/og-cover.mjs`).
 
 > The owned preview images at `../threeJs/public/previews/*.jpg` were available as optional
@@ -46,8 +53,9 @@ All bitmap imagery is **generated procedurally at runtime** via `<canvas>` in
 ## Audio
 **100% procedural Web Audio API** (`src/audio/audio.ts`) — synthesized oscillators and filtered
 noise for the engine, wind, rain, lo-fi music bed, honk, thunder, **tyre skid** (bandpassed noise
-driven by lateral slip), and the **deep tornado wind roar** (low-passed noise that swells with
-proximity). **No audio files**, so no audio licenses apply.
+driven by lateral slip), the **collision bump** (sine thud + noise crunch on physical traffic
+impact), and the **deep tornado wind roar** (low-passed noise that swells with proximity).
+**No audio files**, so no audio licenses apply.
 
 ## Fonts
 - **Space Grotesk**, **Sora**, **JetBrains Mono** — all Open Font License (SIL OFL 1.1),
