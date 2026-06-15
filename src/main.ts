@@ -94,7 +94,7 @@ document.body.appendChild(flash);
 // genuinely reach higher m/s. A presentation factor keeps the on-road feel calm
 // (we don't actually do 370 km/h of world scroll). CRUISE is the auto-cruise
 // target as a fraction of that vehicle's max.
-const SPEED_FACTOR = 0.42; // km/h -> m/s presentation scale
+const SPEED_FACTOR = 1.0; // km/h -> m/s: cars now reach their full rated top speed
 function maxSpeedFor(topKmh: number): number { return (topKmh / 3.6) * SPEED_FACTOR; }
 let MAX_SPEED = maxSpeedFor(car.stats.topSpeed); // m/s, per-vehicle
 let speed = MAX_SPEED * 0.5; // m/s, auto-cruise default
@@ -318,9 +318,12 @@ function render(dt: number, t: number): void {
   const baseX = road.curveX(totalDist);
   const baseY = road.heightAt(totalDist);
   car.root.position.set(baseX + laneX, baseY, 0);
-  // face along the spline tangent + steer + drift yaw (drift yaw is the big one)
+  // face along the spline tangent + steer + drift yaw (drift yaw is the big one).
+  // Models are built front=+Z but the world's forward is -Z, so we add PI to
+  // turn the nose to face AWAY from the chase camera (forward). The steer/drift
+  // terms are negated to keep the nose leaning INTO turns after the 180° flip.
   const heading = road.headingAt(totalDist);
-  car.root.rotation.y = -heading + steerSmooth * 0.06 + yawDrift;
+  car.root.rotation.y = Math.PI - heading - steerSmooth * 0.06 - yawDrift;
   // pitch the chassis with the road slope so it noses up hills / down into dips
   const slope = road.slopeAt(totalDist);
   car.root.rotation.x = slope;
@@ -503,6 +506,10 @@ document.getElementById('opt-reduced')?.addEventListener('change', (e) => {
   reduced = (e.target as HTMLInputElement).checked;
   weather.setReduced(reduced);
   sky.setReduced(reduced);
+});
+// traffic on/off toggle (menu → World)
+document.getElementById('opt-traffic')?.addEventListener('change', (e) => {
+  traffic.setEnabled((e.target as HTMLInputElement).checked);
 });
 if (reduced) {
   const cb = document.getElementById('opt-reduced') as HTMLInputElement;

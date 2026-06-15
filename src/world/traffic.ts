@@ -59,6 +59,7 @@ export class Traffic {
   private spawnAccum = 0;
   private density = 1;
   private cap = MAX;
+  private enabled = true;
 
   constructor(rng: RNG, road: Road) {
     this.rng = rng;
@@ -103,7 +104,14 @@ export class Traffic {
 
   setDensity(d: number): void {
     this.density = d;
-    this.cap = Math.max(0, Math.floor(MAX * d));
+    this.cap = this.enabled ? Math.max(0, Math.floor(MAX * d)) : 0;
+  }
+
+  /** Toggle traffic on/off (menu). Off => cap 0 + park every active car now. */
+  setEnabled(on: boolean): void {
+    this.enabled = on;
+    this.cap = on ? Math.max(0, Math.floor(MAX * this.density)) : 0;
+    if (!on) for (const c of this.cars) if (c.active) this.park(c);
   }
 
   /** Pick a random type that has a free clone, weighted toward common cars. */
@@ -194,7 +202,9 @@ export class Traffic {
       const heading = this.road.headingAt(totalDist + -c.z);
       const slope = this.road.slopeAt(totalDist + -c.z);
       model.group.position.set(cx + LANES[c.lane] + c.offX, cy, c.z);
-      model.group.rotation.set(slope, -heading + c.yaw, 0);
+      // +PI: models are built front=+Z; flip so traffic faces forward (-Z) like
+      // the player (we see their tail-lights as they drive away / we close on them)
+      model.group.rotation.set(slope, Math.PI - heading + c.yaw, 0);
       // spin wheels by this car's ground speed
       const ground = playerSpeed + c.relSpeed;
       for (const w of model.wheels) w.rotation.x += (ground / 0.45) * dt;

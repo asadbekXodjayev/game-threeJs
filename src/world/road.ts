@@ -52,6 +52,12 @@ export class Road {
   private roadPos: Float32Array;
   private groundPos: Float32Array;
   private markPos: Float32Array;
+  // per-cross-section frame cache (centre + perpendicular) reused each rebuild so
+  // the world-anchored lane dashes can span consecutive cross-sections.
+  private frameCx: Float32Array;
+  private frameCy: Float32Array;
+  private framePx: Float32Array;
+  private framePz: Float32Array;
 
   private curveSeed: number;
   // seeded random phases so each playthrough bends left/right differently
@@ -108,17 +114,24 @@ export class Road {
     this.groundGeo.setAttribute('position', new THREE.BufferAttribute(this.groundPos, 3));
     this.groundGeo.setIndex(gIdx);
 
-    // --- lane markings: 2 dashed center dividers, built as small quads ---
-    const markVerts = (SEGS + 1) * 4 * 3; // 2 dividers * 2 verts
+    // --- lane markings: 2 dashed center dividers ---
+    // Each dash is an INDEPENDENT quad (own 4 verts, no sharing) so any single
+    // dash can be collapsed to zero area per frame. Whether a quad is drawn is
+    // keyed to WORLD distance (not the screen-fixed segment index), so the dashes
+    // stay anchored in world space and flow past the car instead of looking glued
+    // to the camera. Index is full (all quads) and built once.
+    this.frameCx = new Float32Array(SEGS + 1);
+    this.frameCy = new Float32Array(SEGS + 1);
+    this.framePx = new Float32Array(SEGS + 1);
+    this.framePz = new Float32Array(SEGS + 1);
+    const markVerts = 2 * SEGS * 4 * 3; // 2 dividers * SEGS quads * 4 verts
     this.markGeo = new THREE.BufferGeometry();
     this.markPos = new Float32Array(markVerts);
     const mIdx: number[] = [];
     for (let d = 0; d < 2; d++) {
-      const base = d * (SEGS + 1) * 2;
       for (let i = 0; i < SEGS; i++) {
-        if (i % 2 === 1) continue; // dash gap (every other segment)
-        const a = base + i * 2, b = base + i * 2 + 1, c = base + (i + 1) * 2, dd = base + (i + 1) * 2 + 1;
-        mIdx.push(a, b, c, b, dd, c);
+        const base = (d * SEGS + i) * 4; // 0=startL 1=startR 2=endL 3=endR
+        mIdx.push(base + 0, base + 1, base + 2, base + 1, base + 3, base + 2);
       }
     }
     this.markGeo.setAttribute('position', new THREE.BufferAttribute(this.markPos, 3));
@@ -244,17 +257,45 @@ export class Road {
       this.groundPos[ri + 1] = cy - 0.04;
       this.groundPos[ri + 2] = z;
 
-      // lane dividers at +/- LANE_OFFSET, each a thin quad on the surface
-      const w = 0.18;
-      for (let d = 0; d < 2; d++) {
-        const lane = (d === 0 ? -LANE_OFFSET : LANE_OFFSET);
-        const base = d * (SEGS + 1) * 2;
-        const mli = (base + i * 2) * 3;
-        const mri = (base + i * 2 + 1) * 3;
-        const mx = cx + perp.x * lane;
-        const mz = z;
-        this.markPos[mli] = mx - perp.x * w; this.markPos[mli + 1] = cy; this.markPos[mli + 2] = mz - perp.z * lane;
-        this.markPos[mri] = mx + perp.x * w; this.markPos[mri + 1] = cy; this.markPos[mri + 2] = mz - perp.z * lane;
+      // cache this cross-section's frame so the lane dashes (built below) can
+      // span from cross-section i to i+1 using consistent centre + perpendicular.
+      this.frameCx[i] = cx;
+      this.frameCy[i] = cy;
+      this.framePx[i] = perp.x;
+      this.framePz[i] = perp.z;
+    }
+
+    // --- world-anchored dashed lane dividers --------------------------------
+    // A dash occupies one SEG_LEN of WORLD distance, then a gap of one. The
+    // on/off test reads the absolute distance of each segment, so the pattern is
+    // fixed in the world: as totalDist grows the dashes scroll toward (and past)
+    // the car. Off-segments collapse to a point (zero area) — invisible, no alloc.
+    const w = 0.18;
+    for (let d = 0; d < 2; d++) {
+      const lane = (d === 0 ? -LANE_OFFSET : LANE_OFFSET);
+      for (let i = 0; i < SEGS; i++) {
+        const base = (d * SEGS + i) * 4 * 3;
+        const zStart = BEHIND - i * SEG_LEN;
+        const distStart = totalDist - zStart;
+        // dash when the world-distance band is "on" (1 seg on, 1 seg off)
+        const on = (((Math.floor(distStart / SEG_LEN) % 2) + 2) % 2) === 0;
+        if (!on) {
+          for (let v = 0; v < 4; v++) { this.markPos[base + v * 3] = 0; this.markPos[base + v * 3 + 1] = -9999; this.markPos[base + v * 3 + 2] = 0; }
+          continue;
+        }
+        const zS = BEHIND - i * SEG_LEN;
+        const zE = BEHIND - (i + 1) * SEG_LEN;
+        const sx = this.frameCx[i] + this.framePx[i] * lane;
+        const ex = this.frameCx[i + 1] + this.framePx[i + 1] * lane;
+        const sy = this.frameCy[i], ey = this.frameCy[i + 1];
+        const spx = this.framePx[i], epx = this.framePx[i + 1];
+        const szc = zS - this.framePz[i] * lane;
+        const ezc = zE - this.framePz[i + 1] * lane;
+        // startL, startR, endL, endR (thin width along the perpendicular)
+        this.markPos[base + 0] = sx - spx * w; this.markPos[base + 1] = sy; this.markPos[base + 2] = szc;
+        this.markPos[base + 3] = sx + spx * w; this.markPos[base + 4] = sy; this.markPos[base + 5] = szc;
+        this.markPos[base + 6] = ex - epx * w; this.markPos[base + 7] = ey; this.markPos[base + 8] = ezc;
+        this.markPos[base + 9] = ex + epx * w; this.markPos[base + 10] = ey; this.markPos[base + 11] = ezc;
       }
     }
     this.roadGeo.attributes.position.needsUpdate = true;
