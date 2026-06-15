@@ -247,6 +247,41 @@ button { font-family: inherit; cursor: pointer; color: inherit; border: 0; backg
 }
 .btn-ghost:hover { background: rgba(243,236,224,.08); }
 
+/* ============================ VEHICLE PICKER ============================ */
+.veh-picker { margin: 1.8rem auto 0.4rem; max-width: 520px; }
+.veh-picker-head {
+  font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.32em;
+  color: var(--teal); text-transform: uppercase; margin-bottom: 0.8rem;
+}
+.veh-grid {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(4, 1fr);
+}
+.veh-grid-panel { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 520px) { .veh-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.veh-card {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  padding: 9px 11px; border-radius: 11px; text-align: left;
+  background: rgba(12, 17, 21, 0.5); border: 1px solid var(--line);
+  color: var(--cream-dim);
+  transition: border-color 0.2s, background 0.2s, transform 0.15s, color 0.2s;
+}
+.veh-card:hover { transform: translateY(-1px); border-color: rgba(243,177,78,.5); color: var(--cream); }
+.veh-card.is-on {
+  background: rgba(243, 177, 78, 0.14); border-color: var(--amber); color: var(--cream);
+  box-shadow: 0 8px 24px -12px rgba(243,177,78,.6);
+}
+.veh-name {
+  font-family: var(--font-display); font-weight: 600; font-size: 0.82rem;
+  letter-spacing: 0.01em; line-height: 1.05;
+}
+.veh-top {
+  font-family: var(--font-mono); font-size: 0.94rem; color: var(--amber); font-weight: 500;
+}
+.veh-card.is-on .veh-top { color: var(--amber); }
+.veh-top i { font-style: normal; font-size: 0.56rem; letter-spacing: 0.1em; color: var(--cream-dim); margin-left: 3px; }
+
 /* photo mode */
 .photobar {
   position: fixed; bottom: var(--pad); left: 50%; transform: translateX(-50%);

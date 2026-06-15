@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export type PropKind = 'tree' | 'pine' | 'palm' | 'rock' | 'building' | 'cactus';
+export type PropKind = 'tree' | 'pine' | 'palm' | 'rock' | 'building' | 'cactus' | 'bush' | 'grass';
 
 export interface Biome {
   id: string;
@@ -39,6 +39,8 @@ export const BIOMES: Biome[] = [
       { kind: 'tree', weight: 5 },
       { kind: 'pine', weight: 4 },
       { kind: 'rock', weight: 1 },
+      { kind: 'bush', weight: 3 },
+      { kind: 'grass', weight: 6 },
     ],
     life: ['bird', 'deer'],
     weather: { rain: 1.4, fall: 1.6, snow: 0.4, storm: 0.8 },
@@ -58,6 +60,8 @@ export const BIOMES: Biome[] = [
       { kind: 'pine', weight: 5 },
       { kind: 'rock', weight: 4 },
       { kind: 'tree', weight: 1 },
+      { kind: 'bush', weight: 2 },
+      { kind: 'grass', weight: 4 },
     ],
     life: ['bird', 'deer'],
     weather: { snow: 2.2, storm: 1.2, rain: 0.7, fall: 0.4 },
@@ -76,6 +80,8 @@ export const BIOMES: Biome[] = [
     props: [
       { kind: 'palm', weight: 6 },
       { kind: 'rock', weight: 2 },
+      { kind: 'grass', weight: 5 },
+      { kind: 'bush', weight: 2 },
     ],
     life: ['bird', 'pedestrian'],
     weather: { storm: 1.8, rain: 1.2, fall: 0.3, snow: 0.05 },
@@ -93,7 +99,9 @@ export const BIOMES: Biome[] = [
     road: c(0x2f3237),
     props: [
       { kind: 'building', weight: 7 },
-      { kind: 'tree', weight: 1 },
+      { kind: 'tree', weight: 2 },
+      { kind: 'bush', weight: 2 },
+      { kind: 'grass', weight: 2 },
     ],
     life: ['bird', 'pedestrian'],
     weather: { rain: 1.6, storm: 1.1, fall: 0.6, snow: 0.6 },

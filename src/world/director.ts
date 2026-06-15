@@ -168,4 +168,7 @@ export class Director {
   }
 
   get clockHours(): number { return this.clock; }
+
+  /** force the day/night clock (QA / debug). 0..24 */
+  setClock(h: number): void { this.clock = ((h % 24) + 24) % 24; }
 }

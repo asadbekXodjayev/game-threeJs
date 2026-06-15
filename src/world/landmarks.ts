@@ -74,15 +74,27 @@ const BUILDERS: Record<LandmarkDef['build'], () => THREE.Group> = {
   tower: buildTower, pyramids: buildPyramids, arch: buildArch, statue: buildStatue,
 };
 
+/** cheap far impostor: a flat dark silhouette card sized to the landmark. */
+function buildImpostor(): THREE.Group {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0x2a2f38, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
+  const card = new THREE.Mesh(new THREE.PlaneGeometry(70, 90), mat);
+  card.position.y = 45;
+  g.add(card);
+  return g;
+}
+
 export class Landmarks {
   group = new THREE.Group();
   private holder = new THREE.Group();
+  private impostor = new THREE.Group();
   private board: THREE.Mesh;
   private rng: RNG;
   private road: Road;
   private active: LandmarkDef | null = null;
   private z = 9999;
   private cooldown = 18; // seconds before first
+  private detailed = false; // currently showing full model vs impostor
   onReveal?: (name: string, location: string) => void;
   private revealed = false;
 
@@ -90,6 +102,9 @@ export class Landmarks {
     this.rng = rng;
     this.road = road;
     this.group.add(this.holder);
+    this.impostor = buildImpostor();
+    this.impostor.visible = false;
+    this.group.add(this.impostor);
     // a distant billboard / nameplate panel that pairs with imagery
     this.board = new THREE.Mesh(
       new THREE.PlaneGeometry(24, 12),
@@ -105,10 +120,11 @@ export class Landmarks {
     const def = this.rng.pick(options);
     this.active = def;
     this.revealed = false;
-    // rebuild holder contents
+    // spawn far as a cheap impostor; the full model is built only on near-swap
     this.clearHolder();
-    const model = BUILDERS[def.build]();
-    this.holder.add(model);
+    this.detailed = false;
+    this.holder.visible = false;
+    this.impostor.visible = true;
     this.z = -380;
     (this.board.material as THREE.MeshBasicMaterial).map = makeBillboardTexture(def.location.toUpperCase());
     (this.board.material as THREE.MeshBasicMaterial).needsUpdate = true;
@@ -137,8 +153,25 @@ export class Landmarks {
     const cx = this.road.curveX(totalDist + -this.z);
     const off = this.active.side === 0 ? 0 : this.active.side * 90;
     this.holder.position.set(cx + off, 0, this.z - 60);
+    this.impostor.position.set(cx + off, 0, this.z - 60);
     this.board.position.set(cx + off, 16, this.z - 20);
     this.board.visible = this.z < -40 && this.z > -260;
+
+    // far-LOD swap: build the full model only when it comes close, drop back to
+    // the impostor (and free the model) once it recedes again.
+    const NEAR = -230;
+    if (!this.detailed && this.z > NEAR) {
+      this.detailed = true;
+      const model = BUILDERS[this.active.build]();
+      this.holder.add(model);
+      this.holder.visible = true;
+      this.impostor.visible = false;
+    } else if (this.detailed && this.z < NEAR - 40) {
+      this.detailed = false;
+      this.clearHolder();
+      this.holder.visible = false;
+      this.impostor.visible = true;
+    }
 
     if (!this.revealed && this.z > -200) {
       this.revealed = true;
@@ -146,6 +179,8 @@ export class Landmarks {
     }
     if (this.z > 120) {
       this.clearHolder();
+      this.holder.visible = false;
+      this.impostor.visible = false;
       this.board.visible = false;
       this.active = null;
     }

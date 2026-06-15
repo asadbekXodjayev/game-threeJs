@@ -7,19 +7,25 @@ import { Road } from './road';
  * Instanced + pooled roadside scatter. One InstancedMesh per prop kind; a ring
  * buffer of instance slots that get repositioned just inside the fog wall and
  * recycled once they pass the camera. One draw call per kind. (isPooled/isAlive)
+ *
+ * P1 populate: many more slots per kind, a higher spawn rate, two roadside
+ * bands (near + far), and added foliage kinds (bush/grass) so the verge reads
+ * full. Counts scale with the quality tier via setDensity so weak GPUs stay
+ * above the FPS floor.
  */
 
 interface Slot {
   z: number; // world z
   side: number;
-  dist: number; // distance value used for curveX
+  rot: number;
+  edge: number; // lateral distance from road centre
   kind: PropKind;
   scale: number;
   active: boolean;
 }
 
-const SPAWN_Z = -360; // just inside fog
-const RECYCLE_Z = 50;
+const SPAWN_Z = -380; // just inside fog
+const RECYCLE_Z = 55;
 const dummy = new THREE.Object3D();
 
 function geoFor(kind: PropKind): THREE.BufferGeometry {
@@ -54,6 +60,18 @@ function geoFor(kind: PropKind): THREE.BufferGeometry {
       g.translate(0, 8, 0);
       return g;
     }
+    case 'bush': {
+      const g = new THREE.IcosahedronGeometry(0.9, 0);
+      g.scale(1.3, 0.8, 1.3);
+      g.translate(0, 0.6, 0);
+      return g;
+    }
+    case 'grass': {
+      // a small tuft = a couple of crossed blades
+      const g = new THREE.ConeGeometry(0.28, 1.1, 4);
+      g.translate(0, 0.55, 0);
+      return g;
+    }
   }
 }
 
@@ -65,20 +83,24 @@ function colorFor(kind: PropKind): number {
     case 'rock': return 0x6d6f6a;
     case 'cactus': return 0x4a7a45;
     case 'building': return 0x6a7488;
+    case 'bush': return 0x46772f;
+    case 'grass': return 0x5f8a3a;
   }
 }
 
 class KindMesh {
   mesh: THREE.InstancedMesh;
   slots: Slot[] = [];
+  cap: number; // active cap (density-scaled)
   constructor(kind: PropKind, max: number) {
     const mat = new THREE.MeshStandardMaterial({ color: colorFor(kind), roughness: 0.9, flatShading: true });
     this.mesh = new THREE.InstancedMesh(geoFor(kind), mat, max);
-    this.mesh.castShadow = true;
+    this.mesh.castShadow = kind !== 'grass';
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = max;
+    this.cap = max;
     for (let i = 0; i < max; i++) {
-      this.slots.push({ z: 9999, side: 1, dist: 0, kind, scale: 1, active: false });
+      this.slots.push({ z: 9999, side: 1, rot: 0, edge: 12, kind, scale: 1, active: false });
       dummy.position.set(0, -9999, 0);
       dummy.updateMatrix();
       this.mesh.setMatrixAt(i, dummy.matrix);
@@ -86,8 +108,11 @@ class KindMesh {
   }
 }
 
-const KINDS: PropKind[] = ['tree', 'pine', 'palm', 'rock', 'cactus', 'building'];
-const MAX_PER_KIND = 60;
+const KINDS: PropKind[] = ['tree', 'pine', 'palm', 'rock', 'cactus', 'building', 'bush', 'grass'];
+// per-kind pool sizes (foliage gets more)
+const MAX_FOR: Partial<Record<PropKind, number>> = {
+  tree: 90, pine: 90, palm: 60, rock: 60, cactus: 40, building: 70, bush: 120, grass: 200,
+};
 
 export class Scatter {
   group = new THREE.Group();
@@ -103,13 +128,17 @@ export class Scatter {
     this.road = road;
     this.biome = biome;
     for (const k of KINDS) {
-      const km = new KindMesh(k, MAX_PER_KIND);
+      const km = new KindMesh(k, MAX_FOR[k] ?? 60);
       this.meshes.set(k, km);
       this.group.add(km.mesh);
     }
   }
 
-  setDensity(d: number): void { this.density = d; }
+  setDensity(d: number): void {
+    this.density = d;
+    // scale the active cap per kind so weak GPUs draw fewer instances
+    for (const km of this.meshes.values()) km.cap = Math.max(8, Math.floor(km.slots.length * d));
+  }
   setBiome(b: Biome): void { this.biome = b; }
 
   private pickKind(): PropKind {
@@ -123,6 +152,9 @@ export class Scatter {
 
   private freeSlot(kind: PropKind): Slot | null {
     const km = this.meshes.get(kind)!;
+    let activeCount = 0;
+    for (const s of km.slots) if (s.active) activeCount++;
+    if (activeCount >= km.cap) return null;
     for (const s of km.slots) if (!s.active) return s;
     return null;
   }
@@ -144,9 +176,8 @@ export class Scatter {
           continue;
         }
         const cx = this.road.curveX(totalDist + -s.z);
-        const edge = (s.kind === 'building' ? 11 : 9) + this.rng2(s) * 60;
-        dummy.position.set(cx + s.side * edge, 0, s.z);
-        dummy.rotation.set(0, s.dist, 0);
+        dummy.position.set(cx + s.side * s.edge, 0, s.z);
+        dummy.rotation.set(0, s.rot, 0);
         dummy.scale.setScalar(s.scale);
         dummy.updateMatrix();
         km.mesh.setMatrixAt(i, dummy.matrix);
@@ -155,8 +186,8 @@ export class Scatter {
       if (dirty) km.mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // spawn new just inside fog, rate scaled by density
-    this.spawnAccum += delta * (0.9 * this.density);
+    // spawn new just inside fog, rate scaled by density (much higher base now)
+    this.spawnAccum += delta * (3.0 * this.density);
     while (this.spawnAccum > 10) {
       this.spawnAccum -= 10;
       const kind = this.pickKind();
@@ -165,14 +196,18 @@ export class Scatter {
       s.active = true;
       s.kind = kind;
       s.side = this.rng.bool() ? 1 : -1;
-      s.scale = this.rng.range(0.7, 1.5);
-      s.dist = this.rng.range(0, Math.PI * 2);
-      s.z = SPAWN_Z - this.rng.range(0, 40);
+      // grass/bush hug the verge; trees fan out wide
+      const near = kind === 'grass' || kind === 'bush';
+      const baseEdge = kind === 'building' ? 12 : near ? 8 : 9;
+      const spread = kind === 'building' ? 50 : near ? 14 : 70;
+      s.edge = baseEdge + this.rng.next() * spread;
+      s.scale = kind === 'grass' ? this.rng.range(0.6, 1.3)
+        : kind === 'building' ? this.rng.range(0.7, 1.8)
+        : this.rng.range(0.7, 1.6);
+      s.rot = this.rng.range(0, Math.PI * 2);
+      s.z = SPAWN_Z - this.rng.range(0, 60);
     }
   }
-
-  // deterministic-ish edge jitter per slot using its dist field
-  private rng2(s: Slot): number { return (Math.sin(s.dist * 12.9898) * 43758.5453) % 1; }
 
   dispose(): void {
     for (const km of this.meshes.values()) {

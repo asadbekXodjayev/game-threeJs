@@ -11,8 +11,8 @@ import type { Biome } from '../data/biomes';
  */
 
 const dummy = new THREE.Object3D();
-const BIRDS = 26;
-const CRITTERS = 12;
+const BIRDS = 48;
+const CRITTERS = 26;
 
 export class Life {
   group = new THREE.Group();
@@ -95,11 +95,16 @@ export class Life {
     }
     if (dirty) this.critters.instanceMatrix.needsUpdate = true;
 
-    this.spawnAccum += delta * 0.06 * this.density;
+    this.spawnAccum += delta * 0.16 * this.density;
+    const cap = Math.max(4, Math.floor(CRITTERS * this.density));
+    let activeCritters = 0;
+    for (const s of this.critterState) if (s.active) activeCritters++;
     while (this.spawnAccum > 10) {
       this.spawnAccum -= 10;
+      if (activeCritters >= cap) break;
       const c = this.critterState.find((s) => !s.active);
       if (!c) continue;
+      activeCritters++;
       c.active = true;
       c.side = this.rng.bool() ? 1 : -1;
       c.phase = this.rng.range(0, 6.28);

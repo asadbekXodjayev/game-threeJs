@@ -9,11 +9,26 @@
 
 ## 3D assets
 All geometry is **procedurally generated from Three.js primitives** in this repo
-(`src/world/*.ts`): the car, road, scatter (trees/pines/palms/rocks/buildings), ambient life
-(birds, deer, pedestrians), knockable props (cone/bin/ball), and the landmarks
-(Iron Lattice Tower, Harbor Statue, Great Pyramids, Triumphal Arch, Sky Obelisk, Stone Colossus).
+(`src/world/*.ts`, `src/car/vehicles.ts`): the **8-vehicle roster** — 2-Door Coupe, Lamborghini,
+Supercar, F1 car (open-wheel + front/rear wings), Motorcycle (two wheels + rider/helmet), SUV
+(tall boxy), Semi Truck (cab + long trailer + exhaust stacks), Monster Truck (oversized wheels +
+lifted body) — all **self-generated stylized low-poly interpretations** built from boxes /
+cylinders / spheres, no branded, ripped, or downloaded models; the continuous spline-ribbon road
+(with lane dividers + ground),
+scatter (trees/pines/palms/rocks/cactus/buildings + foliage bushes/grass tufts), ambient life
+(birds, deer, pedestrians), **light traffic** cars (instanced low-poly), **tyre skid-mark** dabs,
+knockable props (cone/bin/ball), and the landmarks (Iron Lattice Tower, Harbor Statue, Great
+Pyramids, Triumphal Arch, Sky Obelisk, Stone Colossus) with a cheap far-LOD silhouette impostor.
 The landmarks are **original stylized low-poly interpretations** — no branded or ripped models,
 no trademarked signage. No external model files are downloaded.
+
+## Procedural shaders (generated this pass)
+All written in-repo, no external assets:
+- **Night starfield** — instanced `THREE.Points` with a twinkle shader (`src/world/sky.ts`).
+- **Aurora / northern lights** — animated drifting-curtain noise shader on an upper-sky band,
+  green→teal→violet, fades in with night, reduced-motion-aware (`src/world/sky.ts`).
+- **Tornado funnel** — a swirling-band shader on a tapered cone + a debris `Points` swarm,
+  distant and cinematic (`src/world/weather.ts`).
 
 ## Textures & imagery (isImagesUsed)
 All bitmap imagery is **generated procedurally at runtime** via `<canvas>` in
@@ -30,8 +45,9 @@ All bitmap imagery is **generated procedurally at runtime** via `<canvas>` in
 
 ## Audio
 **100% procedural Web Audio API** (`src/audio/audio.ts`) — synthesized oscillators and filtered
-noise for the engine, wind, rain, lo-fi music bed, honk, and thunder. **No audio files**, so no
-audio licenses apply.
+noise for the engine, wind, rain, lo-fi music bed, honk, thunder, **tyre skid** (bandpassed noise
+driven by lateral slip), and the **deep tornado wind roar** (low-passed noise that swells with
+proximity). **No audio files**, so no audio licenses apply.
 
 ## Fonts
 - **Space Grotesk**, **Sora**, **JetBrains Mono** — all Open Font License (SIL OFL 1.1),

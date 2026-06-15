@@ -81,7 +81,7 @@ export class Props {
    */
   update(dt: number, scroll: number, totalDist: number, carX: number, carSpeed: number): void {
     if (this.enabled) {
-      this.spawnAccum += scroll * 0.012;
+      this.spawnAccum += scroll * 0.05 + dt * 1.2;
       while (this.spawnAccum > 10) { this.spawnAccum -= 10; this.spawn(totalDist); }
     }
 

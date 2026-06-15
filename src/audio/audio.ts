@@ -25,6 +25,12 @@ export class GameAudio {
   private windGain!: GainNode;
   private rainGain!: GainNode;
   private windFilter!: BiquadFilterNode;
+  // tornado roar (deep filtered noise)
+  private roarGain!: GainNode;
+  private roarFilter!: BiquadFilterNode;
+  // tyre skid (bandpassed noise, level-driven)
+  private skidGain!: GainNode;
+  private skidFilter!: BiquadFilterNode;
   // music
   private padGains: GainNode[] = [];
 
@@ -65,6 +71,18 @@ export class GameAudio {
     const rainFilter = ctx.createBiquadFilter(); rainFilter.type = 'highpass'; rainFilter.frequency.value = 1800;
     this.rainGain = ctx.createGain(); this.rainGain.gain.value = 0.0;
     rain.connect(rainFilter); rainFilter.connect(this.rainGain); this.rainGain.connect(this.gAmb); rain.start();
+
+    // ---- tornado roar: deep low-passed noise that swells with proximity ----
+    const roar = ctx.createBufferSource(); roar.buffer = noiseBuf; roar.loop = true;
+    this.roarFilter = ctx.createBiquadFilter(); this.roarFilter.type = 'lowpass'; this.roarFilter.frequency.value = 160; this.roarFilter.Q.value = 0.8;
+    this.roarGain = ctx.createGain(); this.roarGain.gain.value = 0.0;
+    roar.connect(this.roarFilter); this.roarFilter.connect(this.roarGain); this.roarGain.connect(this.gAmb); roar.start();
+
+    // ---- tyre skid: bright bandpassed noise driven by slip level ----
+    const skid = ctx.createBufferSource(); skid.buffer = noiseBuf; skid.loop = true;
+    this.skidFilter = ctx.createBiquadFilter(); this.skidFilter.type = 'bandpass'; this.skidFilter.frequency.value = 1600; this.skidFilter.Q.value = 3;
+    this.skidGain = ctx.createGain(); this.skidGain.gain.value = 0.0;
+    skid.connect(this.skidFilter); this.skidFilter.connect(this.skidGain); this.skidGain.connect(this.gEngine); skid.start();
 
     // ---- lo-fi music pad: a slow chord ----
     const chord = [220, 277.18, 329.63, 164.81];
@@ -122,6 +140,22 @@ export class GameAudio {
     this.windGain.gain.setTargetAtTime(0.03 + speed01 * 0.09, t, 0.2);
     this.windFilter.frequency.setTargetAtTime(400 + speed01 * 700, t, 0.2);
     this.rainGain.gain.setTargetAtTime(rainIntensity * 0.16, t, 0.3);
+  }
+
+  /** deep tornado wind roar, level 0..1 */
+  updateTornado(level: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.roarGain.gain.setTargetAtTime(level * 0.28, t, 0.4);
+    this.roarFilter.frequency.setTargetAtTime(120 + level * 140, t, 0.4);
+  }
+
+  /** tyre skid level 0..1 driven by lateral slip */
+  updateSkid(level: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.skidGain.gain.setTargetAtTime(level * 0.12, t, 0.05);
+    this.skidFilter.frequency.setTargetAtTime(1300 + level * 1200, t, 0.06);
   }
 
   honk(dur = 0.5): void {
