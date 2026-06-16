@@ -72,6 +72,7 @@ export class Traffic {
     };
     let colorI = 0;
     for (const def of VEHICLES) {
+      if (def.playerOnly) continue; // hero/async vehicles (Ferrari) aren't traffic
       const n = clonesByType[def.id] ?? 1;
       const clones: VehicleModel[] = [];
       const used: boolean[] = [];

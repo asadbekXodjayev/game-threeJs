@@ -18,7 +18,7 @@ export class Car {
   def: VehicleDef;
 
   private model!: VehicleModel;
-  private wheels: THREE.Mesh[] = [];
+  private wheels: THREE.Object3D[] = [];
   private headlightL!: THREE.SpotLight;
   private headlightR!: THREE.SpotLight;
   private glowL!: THREE.Sprite;
@@ -113,7 +113,10 @@ export class Car {
     const m = def.build();
     this.model = m;
     this.wheels = m.wheels;
-    this.wheelRadius = m.wheels.length ? (m.wheels[0].geometry as THREE.CylinderGeometry).parameters.radiusTop : 0.42;
+    // explicit radius (GLB) wins; else probe a procedural cylinder wheel
+    const w0 = m.wheels[0] as THREE.Mesh | undefined;
+    this.wheelRadius = m.wheelRadius
+      ?? (w0?.geometry ? (w0.geometry as THREE.CylinderGeometry).parameters.radiusTop : 0.42);
     this.leanGain = def.lean;
     this.body.add(m.group);
 
@@ -145,6 +148,9 @@ export class Car {
   }
 
   private disposeGroup(g: THREE.Group): void {
+    // GLB clones (Ferrari) share geometry with the cached template — disposing
+    // would break every other instance and future rebuilds. Skip those.
+    if (g.userData.keepGeometry) return;
     g.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (mesh.isMesh) mesh.geometry?.dispose();

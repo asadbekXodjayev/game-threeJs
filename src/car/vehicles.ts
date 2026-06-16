@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildFerrari } from './ferrari';
 
 /**
  * Multi-vehicle roster (drivable + traffic). Each entry is a distinct stylized
@@ -45,15 +46,21 @@ export interface VehicleDef extends VehicleStats {
   name: string;
   /** Build a fresh, distinct low-poly model centred on the origin, wheels on y=0. */
   build: (paint?: number) => VehicleModel;
+  /** Selectable by the player but kept OUT of background traffic (e.g. the Ferrari,
+   *  which is an async-loaded GLB — heavy to clone many times, and the hero car). */
+  playerOnly?: boolean;
 }
 
 /** A built model: the group plus the parts the handling code animates. */
 export interface VehicleModel {
   group: THREE.Group;
-  /** wheels that spin with speed; [0] & [1] are the steering front wheels. */
-  wheels: THREE.Mesh[];
+  /** wheels that spin with speed; [0] & [1] are the steering front wheels.
+   *  Object3D (not Mesh) so GLB wheel groups — like the Ferrari's — qualify too. */
+  wheels: THREE.Object3D[];
   /** headlight emissive meshes — local positions used to mount spotlights. */
   headlightAnchors: THREE.Vector3[];
+  /** explicit roll radius (m) for wheels that aren't simple cylinders (GLB). */
+  wheelRadius?: number;
 }
 
 // ----------------------------------------------------------------- shared mats
@@ -340,6 +347,16 @@ export const VEHICLES: VehicleDef[] = [
     accel: 0.3, grip: 0.5, driftiness: 0.3, mass: 0.9, rideHeight: 1.4,
     length: 4.0, width: 2.6, steerEase: 0.4, lean: 0.6, bounce: 1.0, camDist: 3.0,
     build: (c = 0x7a3bb0) => buildMonster(c),
+  },
+  {
+    // The real GLB from three.js' webgl_materials_car example (clear-coat paint).
+    // Player-only: async-loaded, so it's never built into the synchronous traffic
+    // pool. Stats tuned to a planted, fast, grippy GT.
+    id: 'ferrari', name: 'Ferrari', topSpeed: 340,
+    accel: 0.9, grip: 0.9, driftiness: 0.45, mass: 0.42, rideHeight: -0.02,
+    length: 4.5, width: 2.0, steerEase: 0.82, lean: 0.4, bounce: 0.18, camDist: 0.3,
+    playerOnly: true,
+    build: (c?: number) => buildFerrari(c),
   },
 ];
 

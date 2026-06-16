@@ -23,7 +23,21 @@ the **tyre-smoke `Points` system** on the player car (`src/world/car.ts`), and t
 Lattice Tower, Harbor Statue, Great Pyramids, Triumphal Arch, Sky Obelisk, Stone Colossus) with a
 cheap far-LOD silhouette impostor.
 The landmarks are **original stylized low-poly interpretations** — no branded or ripped models,
-no trademarked signage. No external model files are downloaded.
+no trademarked signage.
+
+### One vendored model — the Ferrari (player-selectable hero car)
+- **`public/models/ferrari.glb`** — the Ferrari model from the official **three.js**
+  `webgl_materials_car` example (https://threejs.org/examples/#webgl_materials_car),
+  vendored from the three.js repository (`examples/models/gltf/ferrari.glb`). three.js is
+  **MIT-licensed**. Loaded via `GLTFLoader` + `DRACOLoader`; re-skinned in `src/car/ferrari.ts`
+  with the example's signature **clear-coat car-paint** `MeshPhysicalMaterial` (metalness 1,
+  clearcoat 1) plus chrome details and transmissive glass, lit by a `RoomEnvironment` IBL map
+  (PMREM) set up in `src/main.ts`. It is **player-only** (never spawned as background traffic).
+- **`public/draco/`** — the Draco mesh decoder (`draco_decoder.{js,wasm}`,
+  `draco_wasm_wrapper.js`) bundled from `three/examples/jsm/libs/draco/gltf/` so the
+  compressed GLB decodes locally with no CDN dependency. Draco is **Apache-2.0** (Google).
+
+These two are the only downloaded asset files; everything else below remains procedural.
 
 ## Procedural shaders (generated this pass)
 All written in-repo, no external assets:

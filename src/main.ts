@@ -1,5 +1,6 @@
 import './style.css';
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { gsap } from 'gsap';
 import { RNG, resolveSeed } from './core/rng';
 import { PerfManager, type QualityTier } from './core/perf';
@@ -19,6 +20,7 @@ import { Traffic } from './world/traffic';
 import { SkidMarks } from './world/skidmarks';
 import { WEATHERS, type WeatherId } from './data/weather';
 import { VEHICLES } from './car/vehicles';
+import { preloadFerrari, ferrariReady, setFerrariEnv } from './car/ferrari';
 import * as HUD from './ui/hud';
 
 // ----------------------------------------------------------------- setup
@@ -55,6 +57,18 @@ scene.add(sun);
 scene.add(sun.target);
 const ambient = new THREE.HemisphereLight(0xbcd6ff, 0x3a3320, 0.6);
 scene.add(ambient);
+
+// Image-based environment (RoomEnvironment via PMREM), as the three.js
+// `webgl_materials_car` example does — it's what makes the Ferrari's metallic
+// clear-coat paint read as paint (a metalness:1 body is lit purely by the env).
+// Kept at a modest intensity so it adds reflections without washing out the
+// hand-tuned day/night mood across the rest of the world.
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = envTex;
+scene.environmentIntensity = 0.45;
+pmrem.dispose();
+setFerrariEnv(envTex); // car paint reflects at full strength, world stays calm
 
 // world systems
 const sky = new Sky();
@@ -439,6 +453,8 @@ startBtn.addEventListener('click', begin);
 
 // ----- vehicle selection (menu + pause panel) -----
 function setVehicle(id: string): void {
+  // the Ferrari is an async GLB — ignore a pick until its model is cached
+  if (id === 'ferrari' && !ferrariReady()) return;
   const frac = MAX_SPEED > 0 ? speed / MAX_SPEED : 0.5;
   const cfrac = MAX_SPEED > 0 ? cruise / MAX_SPEED : 0.5;
   car.setVehicle(id);
@@ -448,7 +464,20 @@ function setVehicle(id: string): void {
   cruise = MAX_SPEED * cfrac;
   HUD.markVehicle(id);
 }
-HUD.buildVehiclePickers(setVehicle, car.stats.id);
+// the picker marks an explicit player choice so the Ferrari auto-select below
+// never overrides someone who already picked a different car.
+let userPickedVehicle = false;
+HUD.buildVehiclePickers((id) => { userPickedVehicle = true; setVehicle(id); }, car.stats.id);
+
+// Preload the real Ferrari (three.js webgl_materials_car GLB). When it's ready,
+// promote it to the default hero car — unless the player already chose another
+// or already started driving. Failure is non-fatal: the procedural roster stands.
+preloadFerrari()
+  .then(() => {
+    if (!userPickedVehicle && !running) setVehicle('ferrari');
+    else HUD.markVehicle(car.stats.id);
+  })
+  .catch((err) => console.warn('[ferrari] model load failed — using procedural roster:', err));
 
 input.onHonk = () => { audio.honk(); life.scareBirds(); };
 input.onPhoto = () => togglePhoto();
