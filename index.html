@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1" />
-    <title>ENDLESS DRIVE — a chill procedural road trip</title>
-    <meta name="description" content="An endless, procedurally generated drive. No score, no game over. Biomes cross-fade, weather rolls in, landmarks pass on the horizon. Just steer and relax." />
+    <title>OPEN ROAM — a chill open-world playground</title>
+    <meta name="description" content="No road, no rails — just an endless open field under a living sky. Bounce off trampolines, hit ramps and boost pads, drift across the grass. Real sun, moon, stars, clouds and rain." />
     <meta name="theme-color" content="#0e1418" />
 
-    <meta property="og:title" content="ENDLESS DRIVE" />
-    <meta property="og:description" content="A chill, endless procedural road trip in the browser." />
+    <meta property="og:title" content="OPEN ROAM" />
+    <meta property="og:description" content="A chill open-world driving playground in the browser." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="/og/cover.svg" />
 
@@ -27,9 +27,9 @@
     <div id="loader" aria-live="polite">
       <div class="loader-grain" aria-hidden="true"></div>
       <div class="loader-inner">
-        <p class="loader-kicker">A CHILL PROCEDURAL ROAD TRIP</p>
-        <h1 class="loader-title">ENDLESS<span>DRIVE</span></h1>
-        <p class="loader-sub">No score. No game over. Just the road, the weather, and the horizon.</p>
+        <p class="loader-kicker">A CHILL OPEN-WORLD PLAYGROUND</p>
+        <h1 class="loader-title">OPEN<span>ROAM</span></h1>
+        <p class="loader-sub">No road. No rails. Just open ground, bounce toys, and a living sky.</p>
 
         <div class="loader-meter">
           <div class="loader-bar"><i id="loader-fill"></i></div>
@@ -45,7 +45,7 @@
           <span class="start-label">HOLD THE WHEEL</span>
           <span class="start-sub">tap / press to begin · sound on</span>
         </button>
-        <p class="loader-controls">WASD / arrows to steer · SPACE cruise · H honk · P photo mode</p>
+        <p class="loader-controls">WASD / arrows to drive · SPACE drift · ramps &amp; trampolines launch you · H honk · P photo</p>
       </div>
       <p class="loader-seed">SEED <b id="seed-readout">—</b></p>
     </div>
@@ -125,7 +125,7 @@
 
         <section class="panel-row">
           <h3>World</h3>
-          <label class="toggle"><input type="checkbox" id="opt-traffic" checked /> <span>Traffic</span></label>
+          <label class="toggle"><input type="checkbox" id="opt-weather" checked /> <span>Weather effects</span></label>
         </section>
 
         <footer class="panel-foot">

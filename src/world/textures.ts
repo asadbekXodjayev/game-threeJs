@@ -109,6 +109,88 @@ export function makeMoonTexture(): THREE.Texture {
   return tex;
 }
 
+/**
+ * The single canvas "play-mat" ground texture for the open world. One tileable
+ * bitmap: a soft layered-grass base with darker mottled patches, a faint blueprint
+ * grid, and scattered flecks. Drawn so opposite edges line up (wrap-safe) — it is
+ * tiled hundreds of times across the infinite ground plane and scrolled under the
+ * car, so the whole world's floor is this one canvas. (the user's "ground is one canvas")
+ */
+export function makeOpenGroundTexture(): THREE.Texture {
+  const S = 512;
+  const [cv, ctx] = canvas(S, S);
+
+  // layered grass base
+  const base = ctx.createLinearGradient(0, 0, S, S);
+  base.addColorStop(0, '#6ba84f');
+  base.addColorStop(1, '#5c9a44');
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, S, S);
+
+  // mottled darker/lighter patches — drawn with wrap (4 copies offset by ±S) so
+  // a blob crossing an edge reappears on the opposite side and the tile is seamless.
+  const blob = (x: number, y: number, r: number, col: string) => {
+    for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
+      const g = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+      g.addColorStop(0, col);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x + ox, y + oy, r, 0, 6.28); ctx.fill();
+    }
+  };
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * S, y = Math.random() * S, r = 30 + Math.random() * 70;
+    blob(x, y, r, Math.random() < 0.5 ? 'rgba(40,74,30,0.35)' : 'rgba(150,200,110,0.28)');
+  }
+
+  // fine grain flecks (wrap not needed — tiny)
+  for (let i = 0; i < 4200; i++) {
+    const v = Math.random() < 0.5 ? '0,0,0' : '255,255,255';
+    ctx.fillStyle = `rgba(${v},${Math.random() * 0.06})`;
+    ctx.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+  }
+
+  // faint blueprint grid — lines on the seam (0 and S) keep tiling continuous
+  ctx.strokeStyle = 'rgba(245,250,235,0.10)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i <= 4; i++) {
+    const p = (i / 4) * S;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, S); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(S, p); ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+/** Soft puffy cloud sprite — overlapping radial blobs on a transparent canvas. */
+export function makeCloudTexture(): THREE.Texture {
+  const S = 256;
+  const [cv, ctx] = canvas(S, S);
+  const puff = (x: number, y: number, r: number, a: number) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(255,255,255,${a})`);
+    g.addColorStop(0.6, `rgba(255,255,255,${a * 0.5})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.28); ctx.fill();
+  };
+  const cx = S / 2, cy = S / 2;
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * 6.28;
+    const rr = 28 + Math.random() * 40;
+    puff(cx + Math.cos(a) * (40 + Math.random() * 36), cy + Math.sin(a) * (22 + Math.random() * 20), rr, 0.5);
+  }
+  puff(cx, cy, 74, 0.85);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** Circular sprite texture for particles & headlight glow. */
 export function makeDiscTexture(soft = true): THREE.Texture {
   const [cv, ctx] = canvas(64, 64);

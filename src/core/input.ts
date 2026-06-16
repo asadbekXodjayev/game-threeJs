@@ -8,6 +8,8 @@ export class Input {
   private touchSteer = 0;
   private touchGas = 0;
   private touchDrift = false;
+  /** QA/debug override: when set, poll() forces these values (headless testing). */
+  forced: { steer?: number; throttle?: number; drift?: boolean } | null = null;
 
   onHonk?: () => void;
   onPhoto?: () => void;
@@ -75,5 +77,11 @@ export class Input {
     this.steer = Math.max(-1, Math.min(1, s));
     this.throttle = Math.max(-1, Math.min(1, th));
     this.drift = drift;
+
+    if (this.forced) {
+      if (this.forced.steer !== undefined) this.steer = this.forced.steer;
+      if (this.forced.throttle !== undefined) this.throttle = this.forced.throttle;
+      if (this.forced.drift !== undefined) this.drift = this.forced.drift;
+    }
   }
 }

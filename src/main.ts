@@ -8,16 +8,12 @@ import { Input } from './core/input';
 import { GameAudio } from './audio/audio';
 import { Director } from './world/director';
 import { Sky } from './world/sky';
-import { Road, LANE_OFFSET } from './world/road';
-import { Terrain } from './world/terrain';
+import { Ground } from './world/ground';
+import { Obstacles, OB } from './world/obstacles';
+import { Clouds } from './world/clouds';
 import { Car } from './world/car';
-import { Scatter } from './world/scatter';
-import { Life } from './world/life';
 import { Weather } from './world/weather';
-import { Landmarks } from './world/landmarks';
-import { Props } from './world/props';
-import { Traffic } from './world/traffic';
-import { SkidMarks } from './world/skidmarks';
+import { Skids } from './world/skids';
 import { WEATHERS, type WeatherId } from './data/weather';
 import { VEHICLES } from './car/vehicles';
 import { preloadFerrari, ferrariReady, setFerrariEnv } from './car/ferrari';
@@ -41,92 +37,74 @@ app.appendChild(renderer.domElement);
 const perf = new PerfManager(renderer);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x9fc4d6, 0.018);
+scene.fog = new THREE.FogExp2(0x9fc4d6, 0.012);
 
-const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.5, 1200);
-camera.position.set(0, 5, 11);
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.5, 2000);
+camera.position.set(0, 6, -12);
 
 // lights
 const sun = new THREE.DirectionalLight(0xffffff, 1.1);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.near = 1; sun.shadow.camera.far = 120;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 140;
 const sc = sun.shadow.camera as THREE.OrthographicCamera;
-sc.left = -40; sc.right = 40; sc.top = 40; sc.bottom = -40;
+sc.left = -50; sc.right = 50; sc.top = 50; sc.bottom = -50;
 scene.add(sun);
 scene.add(sun.target);
 const ambient = new THREE.HemisphereLight(0xbcd6ff, 0x3a3320, 0.6);
 scene.add(ambient);
 
-// Image-based environment (RoomEnvironment via PMREM), as the three.js
-// `webgl_materials_car` example does — it's what makes the Ferrari's metallic
-// clear-coat paint read as paint (a metalness:1 body is lit purely by the env).
-// Kept at a modest intensity so it adds reflections without washing out the
-// hand-tuned day/night mood across the rest of the world.
+// Image-based environment (RoomEnvironment via PMREM) so the Ferrari's metallic
+// clear-coat paint reads as paint; kept modest so it doesn't wash out the mood.
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = envTex;
 scene.environmentIntensity = 0.45;
 pmrem.dispose();
-setFerrariEnv(envTex); // car paint reflects at full strength, world stays calm
+setFerrariEnv(envTex);
 
-// world systems
+// world systems — open world: real sky + canvas ground + bounce obstacles.
 const sky = new Sky();
 scene.add(sky.group);
 const director = new Director(rng);
-const road = new Road(rng.range(0, 100));
-scene.add(road.group);
-const terrain = new Terrain(rng.range(0, 1000));
-scene.add(terrain.group);
+const ground = new Ground();
+scene.add(ground.group);
+const obstacles = new Obstacles(rng);
+scene.add(obstacles.group);
+const clouds = new Clouds();
+scene.add(clouds.group);
 const car = new Car();
 scene.add(car.root);
-const scatter = new Scatter(rng, road, director.currentBiome);
-scene.add(scatter.group);
-const life = new Life(rng, road, director.currentBiome);
-scene.add(life.group);
 const weather = new Weather(6000);
 scene.add(weather.group);
-const landmarks = new Landmarks(rng, road);
-scene.add(landmarks.group);
-const props = new Props(rng, road);
-scene.add(props.group);
-const traffic = new Traffic(rng, road);
-scene.add(traffic.group);
-const skid = new SkidMarks();
+const skid = new Skids();
 scene.add(skid.group);
 
 const audio = new GameAudio();
 const input = new Input();
 
-// fullscreen lightning flash overlay (no geometry)
+// fullscreen lightning flash overlay
 const flash = document.createElement('div');
 flash.style.cssText = 'position:fixed;inset:0;z-index:25;pointer-events:none;background:#eaf2ff;opacity:0;mix-blend-mode:screen';
 document.body.appendChild(flash);
 
 // ----------------------------------------------------------------- state
-// Speed envelope derives from the ACTIVE vehicle's real top speed: faster cars
-// genuinely reach higher m/s. A presentation factor keeps the on-road feel calm
-// (we don't actually do 370 km/h of world scroll). CRUISE is the auto-cruise
-// target as a fraction of that vehicle's max.
-const SPEED_FACTOR = 1.0; // km/h -> m/s: cars now reach their full rated top speed
+const SPEED_FACTOR = 1.0;
 function maxSpeedFor(topKmh: number): number { return (topKmh / 3.6) * SPEED_FACTOR; }
 let MAX_SPEED = maxSpeedFor(car.stats.topSpeed); // m/s, per-vehicle
-let speed = MAX_SPEED * 0.5; // m/s, auto-cruise default
-let cruise = MAX_SPEED * 0.5;
-let laneX = 0; // smoothed lateral car position relative to road center
-let laneVel = 0;
+
+// free 2D drive: position + heading on the XZ plane, plus a vertical (jump) axis.
+let posX = 0, posZ = 0;      // world position of the car
+let yaw = 0;                 // heading; forward = (sin yaw, cos yaw)
+let velX = 0, velZ = 0;      // world-space velocity (XZ)
+let carY = 0, velY = 0;      // height above ground + vertical velocity (jumps)
 let steerSmooth = 0;
 let roll = 0, pitch = 0, squash = 0, cornerLean = 0;
-let slipVel = 0; // lateral slip velocity (drift) — grip vs slip
-let slip = 0; // 0..1 how much the rear is stepping out (for skid fx)
-let yawDrift = 0; // extra heading from the slide (car body yaws to slip angle)
-let counterSteer = 0; // front-wheel opposite lock while drifting
-let slipAngleDeg = 0; // measured |heading - velocity| in degrees (drift proof)
-let driftForce = false; // QA / handbrake forced drift trigger
-let shake = 0; // camera shake amount from collisions (decays)
-let collisions = 0; // running count of player↔traffic collisions
-let lastHitT = 0;
+let slipAngle = 0;           // rad, |heading − travel| (drift amount)
+let speed = 0;               // |velocity| m/s
 let totalDist = 0;
+let airborne = false;
+let shake = 0;
 let running = false;
 let paused = false;
 let photo = false;
@@ -135,19 +113,14 @@ type CamMode = 'chase' | 'cinematic' | 'hood';
 let camMode: CamMode = 'chase';
 let lastFlash = 0;
 let thunderArmed = false;
+let bounces = 0;
 
-director.onBiomeEnter = (b) => {
-  scatter.setBiome(b);
-  life.setBiome(b);
-  HUD.revealName('NOW ENTERING', b.name);
-};
+const GRAVITY = 26;          // m/s²
+
 director.onWeatherChange = (id, label) => {
   HUD.setWeatherLabel(label);
   weather.setWeather(id);
   if (id === 'storm') thunderArmed = true;
-};
-landmarks.onReveal = (name, location) => {
-  HUD.revealName(location.toUpperCase(), name);
 };
 weather.onFlash = (v) => {
   flash.style.opacity = String(v * 0.85);
@@ -159,13 +132,8 @@ weather.onFlash = (v) => {
 
 perf.onTierChange = (tier: QualityTier) => applyQuality(tier);
 function applyQuality(tier: QualityTier): void {
-  const densities = [1, 0.6, 0.32];
-  const d = densities[tier];
-  scatter.setDensity(d);
-  life.setDensity(d);
-  traffic.setDensity(tier === 0 ? 1 : tier === 1 ? 0.6 : 0.3);
+  obstacles.setDensity(tier === 0 ? 1 : tier === 1 ? 0.7 : 0.45);
   weather.setQuality(tier === 0 ? 1 : tier === 1 ? 0.5 : 0.25);
-  props.setEnabled(tier < 2);
   renderer.shadowMap.enabled = tier === 0;
 }
 
@@ -180,11 +148,10 @@ function frame(): void {
   const now = performance.now();
   let dt = (now - last) / 1000;
   last = now;
-  if (dt > 0.1) dt = 0.1; // clamp big gaps (tab refocus)
+  if (dt > 0.1) dt = 0.1;
   perf.tick();
 
-  if (!running) { renderer.render(scene, camera); return; }
-  if (paused) { renderer.render(scene, camera); return; }
+  if (!running || paused) { renderer.render(scene, camera); return; }
 
   acc += dt;
   while (acc >= FIXED) { step(FIXED); acc -= FIXED; }
@@ -193,211 +160,179 @@ function frame(): void {
 
 function step(dt: number): void {
   input.poll();
-
-  // per-vehicle feel: accel responsiveness, grip/drift, mass, steer quickness
   const st = car.stats;
-  const accelGain = 12 + st.accel * 22; // light cars surge, heavy rigs lag
-  const minCruise = Math.max(5, MAX_SPEED * 0.18);
 
-  // throttle -> cruise speed (auto-cruise by default; player overrides)
-  if (input.throttle > 0.05) cruise = Math.min(MAX_SPEED, cruise + input.throttle * accelGain * dt);
-  else if (input.throttle < -0.05) cruise = Math.max(minCruise, cruise + input.throttle * (accelGain * 1.2) * dt);
-  // heavier vehicles approach the target speed more slowly
-  speed += (cruise - speed) * Math.min(1, (3.0 - st.mass * 1.4) * dt);
+  // heading vectors on the XZ plane
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);   // forward
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);  // right
 
-  const speed01 = speed / MAX_SPEED;
+  // smoothed steering
+  const ease = (reduced ? 5 : 8) * (0.5 + st.steerEase);
+  steerSmooth += (input.steer - steerSmooth) * Math.min(1, ease * dt);
 
-  // speed-sensitive, eased steering with soft auto-center; steerEase = quickness
-  const steerAuthority = 1 - speed01 * 0.45; // lighter at high speed
-  const targetSteer = input.steer * steerAuthority;
-  const ease = (reduced ? 4 : 6) * (0.5 + st.steerEase);
-  steerSmooth += (targetSteer - steerSmooth) * Math.min(1, ease * dt);
+  // longitudinal force: throttle accelerates, brake/reverse pulls back
+  const ACCEL = 8 + st.accel * 26;
+  const force = input.throttle >= 0 ? input.throttle * ACCEL : input.throttle * 26;
+  velX += fx * force * dt;
+  velZ += fz * force * dt;
 
-  // lateral target with soft auto-center toward road center when no input
-  const laneTarget = steerSmooth * (LANE_OFFSET + 2.2);
-  const k = input.steer === 0 ? 2.0 : 3.2; // auto-return softer
-  const desired = laneTarget;
-  const force = (desired - laneX) * k - laneVel * 1.4;
-  laneVel += force * dt;
+  // rolling drag (lets the car coast down; top speed capped below)
+  const drag = 1 - Math.min(1, 0.55 * dt);
+  velX *= drag; velZ *= drag;
 
-  // --- DRIFT: real, VISIBLE slip angle --------------------------------------
-  // A drift is triggered two ways:
-  //   1) HANDBRAKE / drift button (Space, Shift, gamepad A, touch) — instant
-  //      grip break: the rear steps out hard while you hold it.
-  //   2) Hard steering at speed beyond the tyre's grip budget — the rear lets
-  //      go on its own (grip threshold scales with the vehicle's grip stat).
-  // While drifting, the car BODY yaws to a large slip angle (target 30–42°) in
-  // the direction of the turn, the front wheels COUNTER-STEER opposite lock, and
-  // tyre smoke + skid marks + skid audio fire. Easing off recovers grip and the
-  // car straightens — forgiving, capped, never spins fully, no fail state.
-  const handbrake = input.drift || driftForce;
-  const gripThreshold = (reduced ? 0.62 : 0.3) + (st.grip - 0.6) * 0.45;
-  const demand = Math.abs(input.steer) * (0.35 + speed01 * 0.9);
-  const overGrip = Math.max(0, demand - gripThreshold);
-  // are we actively drifting? handbrake at any decent speed, OR over-grip cornering
-  const fast = speed01 > 0.22;
-  const drifting = (handbrake && fast) || overGrip > 0.04;
-  const slipDir = Math.sign(input.steer || steerSmooth) || 1;
+  speed = Math.hypot(velX, velZ);
+  const speed01 = MAX_SPEED > 0 ? speed / MAX_SPEED : 0;
 
-  // lateral slip velocity (used for skid-mark placement + a touch of lane drift)
-  const slipAuthority = (reduced ? 16 : 32) * (0.4 + st.driftiness);
-  const provoke = (handbrake && fast ? 0.5 + Math.abs(input.steer) * 0.6 : overGrip);
-  slipVel += slipDir * provoke * slipAuthority * dt;
-  slipVel -= slipVel * Math.min(1, (reduced ? 3.4 : 2.6) * (0.6 + st.grip) * dt);
-  slipVel = THREE.MathUtils.clamp(slipVel, -8, 8);
-  laneVel += slipVel * dt * 1.8;
+  // steering turns the heading; quicker at mid speed, lighter at the top.
+  // (screen-right needs −yaw given forward=(sin,cos) and a chase camera)
+  const handbrake = input.drift;
+  const turn = (1.7 + (handbrake ? 0.9 : 0)) * (0.35 + Math.min(1, speed / 7) * 0.65) * (1 - speed01 * 0.3);
+  if (speed > 0.4) yaw -= steerSmooth * turn * dt;
 
-  laneX += laneVel * dt;
-  laneX = THREE.MathUtils.clamp(laneX, -8.5, 8.5);
+  // grip model: split velocity into forward + lateral, bleed the lateral part.
+  // High grip kills the slide fast; the handbrake (or over-driving a corner)
+  // drops grip so the rear steps out — a real, visible drift.
+  let fwdComp = velX * fx + velZ * fz;
+  let latComp = velX * rx + velZ * rz;
+  const grip = handbrake ? 1.4 : (3.5 + st.grip * 6);
+  latComp *= Math.max(0, 1 - grip * dt);
+  velX = fx * fwdComp + rx * latComp;
+  velZ = fz * fwdComp + rz * latComp;
 
-  // big visible body yaw to the slip angle. Target peaks ~0.72 rad (≈41°) at a
-  // full handbrake drift, scaled by driftiness; recovers fast when not drifting.
-  const maxSlip = reduced ? 0.5 : 0.78; // rad
-  const driftAmt = drifting ? THREE.MathUtils.clamp(
-    (handbrake && fast ? 0.62 : 0) + provoke * 0.9, 0, 1,
-  ) : 0;
-  const targetYaw = slipDir * driftAmt * maxSlip * (0.7 + st.driftiness * 0.5);
-  // attack fast into the drift, ease out a touch slower so it looks deliberate
-  const yawEase = drifting ? 7 : 4.5;
-  yawDrift += (targetYaw - yawDrift) * Math.min(1, yawEase * dt);
+  // cap to the vehicle's top speed
+  speed = Math.hypot(velX, velZ);
+  if (speed > MAX_SPEED) { const k = MAX_SPEED / speed; velX *= k; velZ *= k; speed = MAX_SPEED; }
 
-  // measured slip angle (degrees) = how far the body heading diverges from the
-  // travel/tangent direction. yawDrift IS that divergence (travel ≈ tangent).
-  slipAngleDeg = Math.abs(yawDrift) * 57.2958;
+  // slip angle = how far travel diverges from heading (drift proof / fx trigger)
+  slipAngle = speed > 1 ? Math.abs(Math.atan2(latComp, Math.max(0.01, fwdComp))) : 0;
 
-  // front wheels counter-steer (opposite lock), proportional to the slide
-  const targetCounter = -slipDir * driftAmt * 0.55;
-  counterSteer += (targetCounter - counterSteer) * Math.min(1, 9 * dt);
-
-  // slip amount 0..1 for skid fx / smoke / audio
-  const targetSlip = THREE.MathUtils.clamp(Math.max(Math.abs(slipVel) / 4, driftAmt), 0, 1);
-  slip += (targetSlip - slip) * Math.min(1, 7 * dt);
-
-  // body feel — extra roll while drifting sells the slide. Heavier bodies roll
-  // a touch less and settle slower; bounce (suspension softness) scales squash.
-  const rollScale = 1 - st.mass * 0.3;
-  const targetRoll = (-steerSmooth * 0.12 - laneVel * 0.02 - slip * slipDir * 0.06) * rollScale;
-  roll += (targetRoll - roll) * Math.min(1, (8 - st.mass * 3) * dt);
-  const accel = (cruise - speed);
-  pitch += ((-accel * 0.004) - pitch) * Math.min(1, 6 * dt);
-  const targetSquash = Math.min(0.06 + st.bounce * 0.06, (Math.abs(laneVel) * 0.006 + slip * 0.02) * (0.6 + st.bounce));
-  squash += (targetSquash - squash) * Math.min(1, (7 - st.bounce * 3) * dt);
-  // cornering lean signal (-1..1) for the model (motorcycle tips into curves)
-  cornerLean += (THREE.MathUtils.clamp(steerSmooth + slipVel * 0.04, -1, 1) - cornerLean) * Math.min(1, 7 * dt);
-
-  // advance world
+  // advance position
+  posX += velX * dt;
+  posZ += velZ * dt;
   totalDist += speed * dt;
-  const scroll = speed * dt;
-  road.update(scroll, totalDist);
-  scatter.update(scroll, totalDist);
-  life.update(scroll, dt, totalDist, totalDist * 0.05);
-  const playerX = road.curveX(totalDist) + laneX;
-  props.update(dt, scroll, totalDist, playerX, speed);
-  // real traffic collision: knock the player back, scrub speed, shake + bump SFX
-  traffic.update(dt, scroll, totalDist, speed, playerX, st.mass, (hit) => {
-    laneVel += hit.impulseX;
-    speed = Math.max(minCruise * 0.5, speed * (1 - hit.scrub));
-    cruise = Math.min(cruise, speed + 4);
-    shake = Math.min(1.2, shake + hit.strength * 0.9);
-    yawDrift += -Math.sign(hit.impulseX || 1) * hit.strength * 0.18; // jolt the body
-    const nowT = totalDist; // distance-stamped throttle so we don't spam audio
-    if (nowT - lastHitT > 3) { collisions++; audio.bump(hit.strength); lastHitT = nowT; }
-  });
-  landmarks.update(dt, scroll, totalDist, director.currentBiomeId);
-  director.update(dt);
-  weather.update(dt, car.root.position);
 
-  // skid marks + tyre smoke while sliding (drift feedback)
-  skid.update(dt, scroll);
-  shake -= shake * Math.min(1, 4 * dt);
-  if (slip > 0.3 && speed > 7) {
-    const baseX = playerX;
-    const h = road.headingAt(totalDist);
-    const cy = road.heightAt(totalDist);
-    skid.emit(baseX - 1.0, -1.45, h, cy);
-    skid.emit(baseX + 1.0, -1.45, h, cy);
-    if (slip > 0.45) { car.emitSmoke(-1); car.emitSmoke(1); }
+  // --- obstacle interactions (jump / bounce / boost) ------------------------
+  obstacles.update(posX, posZ, dt);
+  const onGround = carY <= 0.02;
+  const hit = obstacles.sample(posX, posZ);
+  if (hit && onGround) {
+    const ob = hit.ob;
+    if (ob.type === OB.TRAMPOLINE) {
+      velY = 15.5; ob.pulse = 1; bounces++; audio.bump(0.5);
+    } else if (ob.type === OB.DOME) {
+      velY = Math.max(velY, 7.5); ob.pulse = 1;
+    } else if (ob.type === OB.RAMP) {
+      velY = Math.max(velY, 5 + speed * 0.38); bounces++;
+    } else if (ob.type === OB.BOOST) {
+      // surge forward, allow a temporary overspeed
+      const boost = 60 * dt;
+      velX += fx * boost; velZ += fz * boost;
+      const cap = MAX_SPEED * 1.3, sp = Math.hypot(velX, velZ);
+      if (sp > cap) { const k = cap / sp; velX *= k; velZ *= k; }
+    }
   }
 
-  // audio mapping
+  // vertical (jump) integration
+  if (carY > 0 || velY > 0) {
+    velY -= GRAVITY * dt;
+    carY += velY * dt;
+    if (carY <= 0) {
+      if (velY < -7) { // landing thump
+        squash = Math.min(0.12, -velY * 0.012);
+        shake = Math.min(1, shake + 0.2);
+        if (slipAngle > 0.05 || speed > 6) { car.emitSmoke(-1); car.emitSmoke(1); }
+      }
+      carY = 0; velY = 0;
+    }
+  }
+  airborne = carY > 0.05;
+
+  // --- body feel ------------------------------------------------------------
+  const slipDir = Math.sign(latComp || -steerSmooth) || 1;
+  const drifting = slipAngle > 0.22 && speed > 7;
+  const targetRoll = (-steerSmooth * 0.12 - slipDir * slipAngle * 0.14) * (1 - st.mass * 0.3);
+  roll += (targetRoll - roll) * Math.min(1, 8 * dt);
+  pitch += ((airborne ? -velY * 0.01 : (fwdComp - speed) * 0.004) - pitch) * Math.min(1, 6 * dt);
+  squash += (0 - squash) * Math.min(1, 5 * dt);
+  cornerLean += (THREE.MathUtils.clamp(-steerSmooth - slipDir * slipAngle * 0.4, -1, 1) - cornerLean) * Math.min(1, 7 * dt);
+  shake -= shake * Math.min(1, 4 * dt);
+
+  // skid marks + tyre smoke while sliding on the ground
+  skid.update(dt);
+  if (!airborne && drifting) {
+    const bx = posX, bz = posZ;
+    skid.emit(bx - rx * 1.0, bz - rz * 1.0, yaw);
+    skid.emit(bx + rx * 1.0, bz + rz * 1.0, yaw);
+    if (slipAngle > 0.32) { car.emitSmoke(-1); car.emitSmoke(1); }
+  }
+
+  // world subsystems
+  ground.update(posX, posZ);
+  weather.update(dt, car.root.position);
+  director.update(dt);
+
+  // audio
   audio.updateEngine(speed01, Math.max(0, input.throttle));
-  audio.updateSkid(slip * THREE.MathUtils.clamp(speed01 * 1.4, 0, 1));
+  audio.updateSkid(drifting ? THREE.MathUtils.clamp(slipAngle * 2, 0, 1) * speed01 : 0);
   audio.updateTornado(weather.tornadoLevel);
   const w = WEATHERS[director.activeWeather];
   audio.updateAmbience(speed01, w.particle === 'rain' ? weather.ramp : 0);
 }
 
 function render(dt: number, t: number): void {
-  // place car on the elevated road center + lane offset
-  const baseX = road.curveX(totalDist);
-  const baseY = road.heightAt(totalDist);
-  car.root.position.set(baseX + laneX, baseY, 0);
-  // face along the spline tangent + steer + drift yaw (drift yaw is the big one).
-  // Models are built front=+Z but the world's forward is -Z, so we add PI to
-  // turn the nose to face AWAY from the chase camera (forward). The steer/drift
-  // terms are negated to keep the nose leaning INTO turns after the 180° flip.
-  const heading = road.headingAt(totalDist);
-  car.root.rotation.y = Math.PI - heading - steerSmooth * 0.06 - yawDrift;
-  // pitch the chassis with the road slope so it noses up hills / down into dips
-  const slope = road.slopeAt(totalDist);
-  car.root.rotation.x = slope;
-  car.body.position.y = car.stats.rideHeight; // tall trucks sit up, exotics low
+  // place + orient the car
+  car.root.position.set(posX, carY, posZ);
+  car.root.rotation.set(0, yaw, 0);
+  car.body.position.y = car.stats.rideHeight;
   car.setFeel(roll, pitch, squash, cornerLean);
-  // front wheels: normal steer + counter-steer (opposite lock) while drifting
-  car.steerWheels(steerSmooth * 0.4 + counterSteer);
+  car.steerWheels(steerSmooth * 0.4 + (slipAngle > 0.2 ? -Math.sign(steerSmooth) * 0.3 : 0));
   car.spin(speed, dt);
   car.updateSmoke(dt);
 
-  // distant parallax terrain drifts with travel + tints to the biome ground
-  terrain.update(totalDist, baseX, director.state.ground, director.state.night);
-
-  // apply blended biome/day-night/weather state
+  // apply blended day/night/weather mood
   const s = director.state;
   const fog = scene.fog as THREE.FogExp2;
   fog.color.copy(s.fog);
-  fog.density = s.fogDensity;
+  fog.density = s.fogDensity * 0.7;
   scene.background = null;
   sky.set(s.skyTop, s.skyLow, s.sunDir, s.sun, s.night);
-  // stars + aurora at night; hidden under heavy/dark weather
   const wDef = WEATHERS[director.activeWeather];
-  const clearSky = 1 - (director.activeWeather !== 'clear' ? wDef.dark * weather.ramp : 0);
-  sky.update(t, camera.position, THREE.MathUtils.clamp(clearSky, 0, 1));
+  const storm = director.activeWeather !== 'clear' ? wDef.dark * weather.ramp : 0;
+  const clearSky = THREE.MathUtils.clamp(1 - storm, 0, 1);
+  sky.update(t, camera.position, clearSky);
   sun.color.copy(s.sun);
   sun.intensity = s.sunIntensity;
-  sun.position.copy(s.sunDir).multiplyScalar(60).add(car.root.position);
+  sun.position.copy(s.sunDir).multiplyScalar(70).add(car.root.position);
   sun.target.position.copy(car.root.position);
   ambient.intensity = s.ambient;
-  road.setColors(s.road, s.ground);
+  ground.setBrightness(THREE.MathUtils.lerp(0.5, 1.05, 1 - s.night));
+  obstacles.setNight(s.night);
+  clouds.update(dt, posX, posZ, s.night, storm);
 
-  // headlights on at dusk/night/storm
+  // headlights at night / storm
   const hl = THREE.MathUtils.clamp(s.night * 1.4 + (director.activeWeather === 'storm' ? 0.4 : 0), 0, 1);
   car.setHeadlights(hl);
 
-  // camera rig per mode with damping + lag. Camera Y tracks the car's terrain
-  // height so it crests hills with the car — and because the road dips away on
-  // the far side of a crest, you briefly lose sight of it (real elevation).
-  const cx = car.root.position.x;
-  const cy = car.root.position.y; // terrain height under the car
+  // camera rig
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+  const cd = car.stats.camDist, rh = car.stats.rideHeight;
   if (photo) {
-    // free orbit handled by pointer below; keep target on car
-    cameraTarget.set(cx, cy + 2.2, -2);
+    cameraTarget.set(posX, carY + 1.6, posZ);
     camera.lookAt(cameraTarget);
   } else {
-    // camera offset scales from the vehicle: long/tall rigs pull back & up,
-    // exotics/bikes sit lower & closer.
-    const cd = car.stats.camDist;
-    const rh = car.stats.rideHeight;
     let cam: THREE.Vector3;
-    if (camMode === 'chase') cam = new THREE.Vector3(cx - steerSmooth * 1.5, cy + 5.2 + cd * 0.45 + rh, 11.5 + cd);
-    else if (camMode === 'cinematic') cam = new THREE.Vector3(cx + 7 + cd * 0.4, cy + 2.4 + cd * 0.3 + rh, 9 + cd * 0.6);
-    else cam = new THREE.Vector3(cx, cy + 2.0 + rh, 1.2 + cd * 0.3); // hood
-    const lag = reduced ? 4 : 2.6;
+    if (camMode === 'chase') {
+      const back = 11.5 + cd;
+      cam = new THREE.Vector3(posX - fx * back + rx * steerSmooth * 1.5, 5.2 + rh + cd * 0.45 + carY * 0.3, posZ - fz * back);
+    } else if (camMode === 'cinematic') {
+      cam = new THREE.Vector3(posX + rx * (8 + cd) - fx * 4, 3 + rh + cd * 0.3 + carY * 0.3, posZ + rz * (8 + cd) - fz * 4);
+    } else { // hood
+      cam = new THREE.Vector3(posX + fx * 0.6, 1.9 + rh + carY, posZ + fz * 0.6);
+    }
+    const lag = reduced ? 5 : 3;
     camera.position.lerp(cam, Math.min(1, lag * dt));
-    // look toward the road AHEAD at its own elevation (so over a crest the gaze
-    // points up at the rise, then the road drops out of view beyond it)
-    const aheadY = road.heightAt(totalDist + 18);
-    cameraTarget.lerp(new THREE.Vector3(cx + steerSmooth * 2, aheadY + 1.6, -18), Math.min(1, 3 * dt));
-    // collision shake: jitter the camera briefly on impact
+    cameraTarget.lerp(new THREE.Vector3(posX + fx * 16, carY + 1.8, posZ + fz * 16), Math.min(1, 3.5 * dt));
     if (shake > 0.001 && !reduced) {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake * 0.6;
@@ -412,7 +347,6 @@ function render(dt: number, t: number): void {
   HUD.setFps(perf.fps, perf.tier);
 
   renderer.render(scene, camera);
-  void t;
 }
 
 requestAnimationFrame(frame);
@@ -430,8 +364,7 @@ addEventListener('pointermove', (e) => {
 addEventListener('pointerup', () => (orbiting = false));
 function photoCam(): void {
   if (!photo) return;
-  const cx = car.root.position.x;
-  camera.position.set(cx + Math.sin(orbAz) * orbR, 2 + orbEl * orbR, Math.cos(orbAz) * orbR);
+  camera.position.set(posX + Math.sin(orbAz) * orbR, 2 + orbEl * orbR, posZ + Math.cos(orbAz) * orbR);
 }
 setInterval(() => { if (photo && !orbiting) photoCam(); }, 16);
 
@@ -440,38 +373,33 @@ const startBtn = document.getElementById('start-btn') as HTMLButtonElement;
 function begin(): void {
   if (running) return;
   running = true;
+  // a gentle roll forward so the world is alive the moment you start
+  velX = Math.sin(yaw) * MAX_SPEED * 0.22;
+  velZ = Math.cos(yaw) * MAX_SPEED * 0.22;
   audio.start();
   applyQuality(perf.tier);
   HUD.hideLoader();
   HUD.showHud();
   if (matchMedia('(pointer: coarse)').matches) HUD.showTouch();
   director.begin();
-  // intro camera sweep
-  gsap.fromTo(camera.position, { y: 30, z: 40 }, { y: 5.2, z: 11.5, duration: 2.4, ease: 'power2.out' });
+  HUD.revealName('OPEN WORLD', 'ROAM FREELY');
+  gsap.fromTo(camera.position, { y: 34, z: -46 }, { y: 5.2, z: -12, duration: 2.4, ease: 'power2.out' });
 }
 startBtn.addEventListener('click', begin);
 
 // ----- vehicle selection (menu + pause panel) -----
 function setVehicle(id: string): void {
-  // the Ferrari is an async GLB — ignore a pick until its model is cached
   if (id === 'ferrari' && !ferrariReady()) return;
   const frac = MAX_SPEED > 0 ? speed / MAX_SPEED : 0.5;
-  const cfrac = MAX_SPEED > 0 ? cruise / MAX_SPEED : 0.5;
   car.setVehicle(id);
   MAX_SPEED = maxSpeedFor(car.stats.topSpeed);
-  // preserve the relative pace so swapping mid-drive isn't jarring
-  speed = MAX_SPEED * frac;
-  cruise = MAX_SPEED * cfrac;
+  const sp = Math.hypot(velX, velZ);
+  if (sp > 0.01) { const k = (MAX_SPEED * frac) / sp; velX *= k; velZ *= k; }
   HUD.markVehicle(id);
 }
-// the picker marks an explicit player choice so the Ferrari auto-select below
-// never overrides someone who already picked a different car.
 let userPickedVehicle = false;
 HUD.buildVehiclePickers((id) => { userPickedVehicle = true; setVehicle(id); }, car.stats.id);
 
-// Preload the real Ferrari (three.js webgl_materials_car GLB). When it's ready,
-// promote it to the default hero car — unless the player already chose another
-// or already started driving. Failure is non-fatal: the procedural roster stands.
 preloadFerrari()
   .then(() => {
     if (!userPickedVehicle && !running) setVehicle('ferrari');
@@ -479,7 +407,7 @@ preloadFerrari()
   })
   .catch((err) => console.warn('[ferrari] model load failed — using procedural roster:', err));
 
-input.onHonk = () => { audio.honk(); life.scareBirds(); };
+input.onHonk = () => { audio.honk(); };
 input.onPhoto = () => togglePhoto();
 input.onPause = () => togglePause();
 
@@ -536,9 +464,9 @@ document.getElementById('opt-reduced')?.addEventListener('change', (e) => {
   weather.setReduced(reduced);
   sky.setReduced(reduced);
 });
-// traffic on/off toggle (menu → World)
-document.getElementById('opt-traffic')?.addEventListener('change', (e) => {
-  traffic.setEnabled((e.target as HTMLInputElement).checked);
+// weather effects on/off
+document.getElementById('opt-weather')?.addEventListener('change', (e) => {
+  if (!(e.target as HTMLInputElement).checked) { weather.clear(); HUD.setWeatherLabel('Clear'); }
 });
 if (reduced) {
   const cb = document.getElementById('opt-reduced') as HTMLInputElement;
@@ -554,7 +482,6 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 document.addEventListener('visibilitychange', () => {
-  // pause rendering work when hidden (isFast)
   if (document.hidden) { last = performance.now(); }
 });
 
@@ -566,36 +493,27 @@ const li = setInterval(() => {
   if (p >= 100) clearInterval(li);
 }, 90);
 
-// expose a couple of hooks for the QA harness
+// QA / debug hooks
 (window as unknown as Record<string, unknown>).__game = {
   begin,
   forceWeather: (id: WeatherId) => { weather.setWeather(id); HUD.setWeatherLabel(WEATHERS[id].label); if (id === 'storm') thunderArmed = true; },
   forceNight: () => director.setClock(0),
   forceDay: () => director.setClock(12),
   setClock: (h: number) => director.setClock(h),
-  setCruise: (v: number) => { cruise = v; },
-  warp: (km: number) => { totalDist += km * 1000; },
+  warp: (m: number) => { posX += Math.sin(yaw) * m; posZ += Math.cos(yaw) * m; },
   lockQuality: (tier: 0 | 1 | 2 | null) => perf.lock(tier),
   setVehicle: (id: string) => setVehicle(id),
   vehicles: () => VEHICLES.map((v) => ({ id: v.id, name: v.name, topSpeed: v.topSpeed })),
-  // drift control for QA: hold the handbrake drift on/off (steer is still needed)
-  setDrift: (on: boolean) => { driftForce = on; },
-  // steer override for QA so a sustained drift can be provoked headlessly
   setSteer: (v: number) => { input.steer = THREE.MathUtils.clamp(v, -1, 1); },
-  // force a player↔traffic collision by parking a car right in front of us
-  forceCollision: () => traffic.slamInFront(road.curveX(totalDist) + laneX, totalDist),
-  // road-shape probes for the elevation/curve screenshots
-  roadProbe: () => ({
-    heightHere: road.heightAt(totalDist),
-    heightAhead: road.heightAt(totalDist + 60),
-    slopeDeg: road.slopeAt(totalDist) * 57.2958,
-    curveX: road.curveX(totalDist),
-    headingDeg: road.headingAt(totalDist) * 57.2958,
-  }),
+  jump: (v = 14) => { if (carY <= 0.02) velY = v; },
+  // deterministic drive for headless QA (software GPU can't run the loop in
+  // realtime): force inputs, then advance fixed sim steps directly.
+  input: (throttle = 0, steer = 0, drift = false) => { input.forced = { throttle, steer, drift }; },
+  sim: (seconds: number) => { const n = Math.round(seconds / FIXED); for (let i = 0; i < n; i++) step(FIXED); },
   state: () => ({
-    speed, totalDist, biome: director.currentBiomeId, weather: weather.current,
-    tier: perf.tier, fps: perf.fps, props: props.activeCount, scatter: scatter.activeCount, traffic: traffic.activeCount,
-    slip, slipAngleDeg, drifting: slipAngleDeg > 10, collisions,
+    speed, totalDist, posX, posZ, yaw, carY, airborne, bounces,
+    weather: weather.current, tier: perf.tier, fps: perf.fps,
+    slipAngleDeg: slipAngle * 57.2958, drifting: slipAngle > 0.22 && speed > 7,
     night: director.state.night, tornado: weather.tornadoLevel, vehicle: car.stats.id,
     maxSpeed: MAX_SPEED, drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
   }),

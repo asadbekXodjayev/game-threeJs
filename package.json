@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build && node scripts/og-cover.mjs",
     "preview": "vite preview --port 4190 --strictPort",
-    "qa": "node qa/smoke.mjs"
+    "qa": "node qa/openroam.mjs"
   },
   "dependencies": {
     "gsap": "^3.12.5",
